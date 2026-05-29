@@ -177,8 +177,8 @@ def admin_delete_transactions(transaction_ids: list[str], *, actor) -> int:
         .filter(id__in=id_set)
         .order_by('created_at'),
     )
-    if len(txs) != len(id_set):
-        raise AdminTransactionError('One or more transactions were not found.')
+    if not txs:
+        return 0
 
     deleted = 0
     for tx in txs:

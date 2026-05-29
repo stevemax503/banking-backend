@@ -52,6 +52,30 @@ def _delete_regulated_sessions(session_qs, *, actor) -> None:
         admin_delete_transactions(tx_ids, actor=actor)
 
 
+def _regulated_session_query(user_id, account_ids: list):
+    query = Q(user_id=user_id) | Q(loan_application__applicant_id=user_id)
+    if account_ids:
+        query |= Q(from_account_id__in=account_ids) | Q(to_account_id__in=account_ids)
+    return RegulatedTransferSession.objects.filter(query)
+
+
+def _transaction_ids_for_user(user_id, account_ids: list) -> list[str]:
+    tx_filter = Q(initiated_by_id=user_id) | Q(reversed_by_id=user_id)
+    if account_ids:
+        tx_filter |= Q(from_account_id__in=account_ids) | Q(to_account_id__in=account_ids)
+    return [str(pk) for pk in Transaction.objects.filter(tx_filter).values_list('id', flat=True)]
+
+
+def _delete_support_for_user(user_id) -> None:
+    customer_ticket_ids = list(
+        SupportTicket.objects.filter(customer_id=user_id).values_list('id', flat=True),
+    )
+    if customer_ticket_ids:
+        TicketMessage.objects.filter(ticket_id__in=customer_ticket_ids).delete()
+        SupportTicket.objects.filter(id__in=customer_ticket_ids).delete()
+    TicketMessage.objects.filter(author_id=user_id).delete()
+
+
 def _delete_loan_application(application: LoanApplication, *, actor) -> None:
     _delete_regulated_sessions(
         RegulatedTransferSession.objects.filter(loan_application_id=application.id),
@@ -76,33 +100,18 @@ def force_delete_user(user: CustomUser, *, actor) -> dict:
     user_id = user.id
     account_ids = list(Account.objects.filter(owner_id=user_id).values_list('id', flat=True))
 
-    _delete_regulated_sessions(
-        RegulatedTransferSession.objects.filter(
-            Q(user_id=user_id)
-            | Q(from_account__owner_id=user_id)
-            | Q(loan_application__applicant_id=user_id),
-        ),
-        actor=actor,
-    )
+    _delete_regulated_sessions(_regulated_session_query(user_id, account_ids), actor=actor)
+    _delete_support_for_user(user_id)
 
-    for application in LoanApplication.objects.filter(applicant_id=user_id):
-        _delete_loan_application(application, actor=actor)
-
-    tx_filter = Q(initiated_by_id=user_id) | Q(reversed_by_id=user_id)
-    if account_ids:
-        tx_filter |= Q(from_account_id__in=account_ids) | Q(to_account_id__in=account_ids)
-    tx_ids = [str(pk) for pk in Transaction.objects.filter(tx_filter).values_list('id', flat=True)]
+    tx_ids = _transaction_ids_for_user(user_id, account_ids)
     deleted_tx_count = admin_delete_transactions(tx_ids, actor=actor) if tx_ids else 0
 
-    customer_ticket_ids = list(
-        SupportTicket.objects.filter(customer_id=user_id).values_list('id', flat=True),
-    )
-    if customer_ticket_ids:
-        TicketMessage.objects.filter(ticket_id__in=customer_ticket_ids).delete()
-        SupportTicket.objects.filter(id__in=customer_ticket_ids).delete()
-    TicketMessage.objects.filter(author_id=user_id).delete()
+    for application in list(LoanApplication.objects.filter(applicant_id=user_id)):
+        _delete_loan_application(application, actor=actor)
 
-    StaffCustomerAssignment.objects.filter(Q(staff_id=user_id) | Q(assigned_by_id=user_id)).delete()
+    StaffCustomerAssignment.objects.filter(
+        Q(staff_id=user_id) | Q(customer_id=user_id) | Q(assigned_by_id=user_id),
+    ).delete()
 
     deleted_accounts, _ = Account.objects.filter(owner_id=user_id).delete()
 

@@ -207,7 +207,14 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
                 )
         old_data = AdminUserSerializer(user).data
         target_id = user.id
-        summary = force_delete_user(user, actor=request.user)
+        try:
+            summary = force_delete_user(user, actor=request.user)
+        except Exception as exc:
+            logger.exception('Force delete failed for user %s', target_id)
+            return Response(
+                {'detail': f'Could not delete user: {exc}'},
+                status=status.HTTP_409_CONFLICT,
+            )
         log_action(
             actor=request.user,
             action=AuditLog.Action.DELETE,
