@@ -9,7 +9,7 @@ from xml.sax.saxutils import escape
 from django.conf import settings
 from django.core.files.base import ContentFile
 from apps.notifications.email_assets import send_branded_email
-from apps.notifications.email_layout import get_from_email, render_custom_email
+from apps.notifications.email_layout import get_from_email_for_event, render_custom_email
 from django.db.models import Q
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -337,7 +337,7 @@ def email_statement_pdf(statement: Statement, to_email: str, e_signed: bool = Fa
         subject=subject,
         text_body=text_body,
         html_body=html_body,
-        from_email=get_from_email(),
+        from_email=get_from_email_for_event('statement_ready', {}),
         recipient_list=[to_email],
         fail_silently=False,
         attachments=[(fname, pdf_bytes, 'application/pdf')],

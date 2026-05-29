@@ -10,21 +10,46 @@ from apps.loans.models import LoanAccount, LoanApplication, RepaymentSchedule
 from apps.support.models import SupportTicket, TicketMessage
 from apps.transactions.admin_transaction import admin_delete_transactions
 from apps.transactions.models import Transaction
-from apps.transactions.regulated_models import RegulatedTransferSession
+from apps.transactions.regulated_models import RegulatedTransferSession, RegulatedTransferSessionLine
 from apps.users.models import CustomUser, StaffCustomerAssignment
 
 
+def _collect_regulated_transaction_ids(session_ids: list) -> list[str]:
+    if not session_ids:
+        return []
+    tx_ids: list[str] = []
+    for fee_tx_id in RegulatedTransferSessionLine.objects.filter(
+        session_id__in=session_ids,
+    ).values_list('fee_transaction_id', flat=True):
+        if fee_tx_id:
+            tx_ids.append(str(fee_tx_id))
+    for transfer_tx_id in RegulatedTransferSession.objects.filter(
+        id__in=session_ids,
+    ).values_list('transfer_transaction_id', flat=True):
+        if transfer_tx_id:
+            tx_ids.append(str(transfer_tx_id))
+    return list(dict.fromkeys(tx_ids))
+
+
+def _detach_regulated_session_transactions(session_ids: list) -> None:
+    """Clear PROTECT FKs so compliance / transfer transactions can be removed."""
+    if not session_ids:
+        return
+    RegulatedTransferSessionLine.objects.filter(session_id__in=session_ids).update(fee_transaction=None)
+    RegulatedTransferSession.objects.filter(id__in=session_ids).update(transfer_transaction=None)
+
+
 def _delete_regulated_sessions(session_qs, *, actor) -> None:
-    for session in session_qs.select_related('transfer_transaction').prefetch_related('lines'):
-        tx_ids = []
-        if session.transfer_transaction_id:
-            tx_ids.append(str(session.transfer_transaction_id))
-        for line in session.lines.all():
-            if line.fee_transaction_id:
-                tx_ids.append(str(line.fee_transaction_id))
-        if tx_ids:
-            admin_delete_transactions(tx_ids, actor=actor)
-        session.delete()
+    session_ids = list(session_qs.values_list('id', flat=True))
+    if not session_ids:
+        return
+
+    tx_ids = _collect_regulated_transaction_ids(session_ids)
+    _detach_regulated_session_transactions(session_ids)
+    session_qs.delete()
+
+    if tx_ids:
+        admin_delete_transactions(tx_ids, actor=actor)
 
 
 def _delete_loan_application(application: LoanApplication, *, actor) -> None:

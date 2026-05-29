@@ -54,7 +54,13 @@ Copy `.env.example` to `.env` and fill in every value before starting the applic
 | `EMAIL_USE_TLS` | `True` | Enable TLS |
 | `EMAIL_HOST_USER` | `no-reply@yourdomain.com` | SMTP username |
 | `EMAIL_HOST_PASSWORD` | `...` | SMTP password or API key |
-| `DEFAULT_FROM_EMAIL` | `SafaPay Bank <no-reply@yourdomain.com>` | From address shown to recipients |
+| `DEFAULT_FROM_EMAIL` | `SafaPay Bank <info@safapaygroup.com>` | Fallback From when no event-specific alias applies |
+| `INFO_EMAIL` | `info@safapaygroup.com` | Welcome, deposits/credits, loans, compliance confirmations |
+| `SUPPORT_EMAIL` | `support@safapaygroup.com` | Support ticket replies; footer contact on informational mail |
+| `SECURITY_EMAIL` | `security@safapaygroup.com` | OTP, password reset, debit/withdrawal alerts |
+| `ADMIN_EMAIL` | `admin@safapaygroup.com` | Admin-approved profile updates |
+
+All four addresses should be configured as **send-as aliases** of the primary SMTP mailbox (e.g. Google Workspace aliases of `info@safapaygroup.com`).
 
 ---
 

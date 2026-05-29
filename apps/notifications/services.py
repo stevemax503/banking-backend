@@ -9,7 +9,7 @@ from celery import shared_task
 from django.conf import settings
 
 from .email_assets import send_branded_email
-from .email_layout import EMAIL_SUBJECTS, get_from_email, render_event_email
+from .email_layout import EMAIL_SUBJECTS, get_from_email_for_event, render_event_email
 from .in_app import IN_APP_EVENT_TYPES, build_in_app_notification, in_app_event_type_for_email
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def send_email_notification(self, user_id: str, event_type: str, context: dict):
             subject=subject,
             text_body=text_body,
             html_body=html_body,
-            from_email=get_from_email(),
+            from_email=get_from_email_for_event(event_type, context),
             recipient_list=[user.email],
             fail_silently=False,
         )

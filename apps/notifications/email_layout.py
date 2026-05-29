@@ -15,15 +15,101 @@ from .email_assets import logo_image_src, public_assets_base
 
 BANK_NAME = 'SafaPay Bank'
 BANK_TAGLINE = 'Purity, clarity, and trust'
-SUPPORT_EMAIL = getattr(settings, 'SUPPORT_EMAIL', 'support@safapay.bank')
+
+SENDER_DISPLAY_NAMES = {
+    'info': 'SafaPay Bank',
+    'support': 'SafaPay Support',
+    'security': 'SafaPay Security',
+    'admin': 'SafaPay Bank',
+}
+
+# Outgoing From address per notification type (aliases of the primary mailbox).
+EVENT_SENDER_KEYS: dict[str, str | None] = {
+    'registration': 'info',
+    'transaction': None,  # credit -> info, debit -> security
+    'loan_approved': 'info',
+    'loan_rejected': 'info',
+    'loan_payment_due': 'info',
+    'statement_ready': 'info',
+    'goal_autosave_success': 'info',
+    'goal_autosave_insufficient': 'info',
+    'compliance_payment_confirmed': 'info',
+    'low_balance': 'info',
+    'support_update': 'support',
+    'mfa_otp': 'security',
+    'compliance_fee_otp': 'security',
+    'password_reset': 'security',
+    'security_alert': 'security',
+    'profile_update_approved': 'admin',
+}
+
+# Footer / reply contact may differ from From (e.g. welcome from info@, questions to support@).
+EVENT_CONTACT_SENDER_KEYS: dict[str, str | None] = {
+    'registration': 'support',
+    'loan_approved': 'support',
+    'loan_rejected': 'support',
+    'loan_payment_due': 'support',
+    'compliance_payment_confirmed': 'support',
+    'low_balance': 'support',
+    'goal_autosave_success': 'support',
+    'goal_autosave_insufficient': 'support',
+    'statement_ready': 'support',
+    'transaction': None,  # credit -> support, debit -> security
+    'profile_update_approved': 'admin',
+}
+
+
+def get_sender_addresses() -> dict[str, str]:
+    return {
+        'info': getattr(settings, 'INFO_EMAIL', 'info@safapaygroup.com'),
+        'support': getattr(settings, 'SUPPORT_EMAIL', 'support@safapaygroup.com'),
+        'security': getattr(settings, 'SECURITY_EMAIL', 'security@safapaygroup.com'),
+        'admin': getattr(settings, 'ADMIN_EMAIL', 'admin@safapaygroup.com'),
+    }
+
+
+def resolve_sender_key(event_type: str, context: dict | None = None) -> str:
+    """Pick info / support / security / admin based on notification type."""
+    context = context or {}
+    if event_type == 'transaction':
+        direction = (context.get('direction') or '').lower()
+        return 'security' if direction == 'debit' else 'info'
+    key = EVENT_SENDER_KEYS.get(event_type)
+    return key if key else 'info'
+
+
+def resolve_contact_key(event_type: str, context: dict | None = None) -> str:
+    """Footer mailto / help contact for the email body."""
+    context = context or {}
+    if event_type == 'transaction':
+        direction = (context.get('direction') or '').lower()
+        return 'security' if direction == 'debit' else 'support'
+    override = EVENT_CONTACT_SENDER_KEYS.get(event_type)
+    if override:
+        return override
+    return resolve_sender_key(event_type, context)
+
+
+def format_from_address(sender_key: str) -> str:
+    addresses = get_sender_addresses()
+    key = sender_key if sender_key in addresses else 'info'
+    email = addresses[key]
+    name = SENDER_DISPLAY_NAMES.get(key, BANK_NAME)
+    return f'{name} <{email}>'
+
+
+def get_from_email_for_event(event_type: str, context: dict | None = None) -> str:
+    return format_from_address(resolve_sender_key(event_type, context))
 
 
 def get_from_email() -> str:
-    """From header for outgoing mail; ensures a display name when .env is bare address."""
+    """Default From header (info@); prefer explicit DEFAULT_FROM_EMAIL when set."""
     raw = (getattr(settings, 'DEFAULT_FROM_EMAIL', '') or '').strip()
     if not raw:
         user = (getattr(settings, 'EMAIL_HOST_USER', '') or '').strip()
-        return f'{BANK_NAME} <{user}>' if user else BANK_NAME
+        if user:
+            return format_from_address('info') if '@' in user else f'{BANK_NAME} <{user}>'
+        return format_from_address('info')
     if '@' in raw and '<' not in raw and '>' not in raw:
         return f'{BANK_NAME} <{raw}>'
     return raw
@@ -145,7 +231,7 @@ def get_email_brand_context() -> dict:
     return {
         'bank_name': BANK_NAME,
         'bank_tagline': BANK_TAGLINE,
-        'support_email': SUPPORT_EMAIL,
+        'support_email': getattr(settings, 'SUPPORT_EMAIL', 'support@safapaygroup.com'),
         'copyright_year': year,
         'logo_src': logo_src if use_logo_image else '',
         'has_logo': use_logo_image,
@@ -187,7 +273,9 @@ def render_event_email(event_type: str, context: dict) -> tuple[str, str, str]:
     Returns (subject, plain_text_body, html_body) with branded header and footer.
     """
     subject = EMAIL_SUBJECTS.get(event_type, 'SafaPay Bank Notification')
+    contact_key = resolve_contact_key(event_type, context)
     ctx = {**get_email_brand_context(), **context, 'email_subject': subject}
+    ctx['support_email'] = get_sender_addresses()[contact_key]
     if event_type == 'mfa_otp':
         validity_sec = int(getattr(settings, 'OTP_EMAIL_TOKEN_VALIDITY', 300))
         if validity_sec >= 60:

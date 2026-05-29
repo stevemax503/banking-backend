@@ -20,8 +20,8 @@ Interactive docs available at `/api/docs/` (Swagger UI) and `/api/redoc/`.
 ```json
 // Request
 {
-  "email": "john@example.com",
-  "full_name": "John Doe",
+  "email": "customer@example.com",
+  "full_name": "Legal Full Name",
   "phone": "+1234567890",
   "password": "SecurePass123!",
   "password_confirm": "SecurePass123!"
@@ -38,7 +38,7 @@ Interactive docs available at `/api/docs/` (Swagger UI) and `/api/redoc/`.
 
 ```json
 // Request
-{ "email": "john@example.com", "password": "SecurePass123!" }
+{ "email": "customer@example.com", "password": "SecurePass123!" }
 
 // Response 200 (MFA disabled)
 { "access": "<jwt_token>", "refresh": "<refresh_token>" }
@@ -55,7 +55,7 @@ Interactive docs available at `/api/docs/` (Swagger UI) and `/api/redoc/`.
 ```json
 // Request
 {
-  "email": "john@example.com",
+  "email": "customer@example.com",
   "token": "123456",
   "mfa_type": "email"   // or "totp"
 }
@@ -99,8 +99,8 @@ Interactive docs available at `/api/docs/` (Swagger UI) and `/api/redoc/`.
 // Response 200
 {
   "id": "uuid",
-  "email": "john@example.com",
-  "full_name": "John Doe",
+  "email": "customer@example.com",
+  "full_name": "Legal Full Name",
   "phone": "+1234567890",
   "role": "CUSTOMER",
   "kyc_status": "PENDING",
@@ -116,7 +116,7 @@ Interactive docs available at `/api/docs/` (Swagger UI) and `/api/redoc/`.
 
 ```json
 // Request (all fields optional)
-{ "full_name": "John Smith", "phone": "+19876543210", "address": "123 Main St" }
+{ "full_name": "Updated Legal Name", "phone": "+19876543210", "address": "123 Main St" }
 ```
 
 ---
@@ -143,7 +143,7 @@ Interactive docs available at `/api/docs/` (Swagger UI) and `/api/redoc/`.
 
 ```json
 // Request
-{ "email": "john@example.com" }
+{ "email": "customer@example.com" }
 
 // Response 200 (always, even if email not found — prevents enumeration)
 { "detail": "If this email exists, a reset link has been sent." }

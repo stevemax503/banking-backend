@@ -2,7 +2,7 @@
 Send a sample branded email (header + footer) to verify SMTP and templates.
 
 Usage:
-  python manage.py send_sample_branded_email --to nwagbaraxtopher@gmail.com
+  python manage.py send_sample_branded_email --to you@example.com
 """
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -18,19 +18,19 @@ class Command(BaseCommand):
         parser.add_argument(
             '--to',
             type=str,
-            default='nwagbaraxtopher@gmail.com',
+            required=True,
             help='Recipient email address',
         )
         parser.add_argument(
             '--subject',
             type=str,
-            default='random test',
+            default='SafaPay Bank — email test',
             help='Email subject line',
         )
         parser.add_argument(
             '--body',
             type=str,
-            default='random test',
+            default='This is a test message to verify branded email delivery.',
             help='Plain-text message body (wrapped with branded header/footer)',
         )
 

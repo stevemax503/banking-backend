@@ -10,7 +10,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.notifications.email_assets import send_branded_email
-from apps.notifications.email_layout import get_from_email, render_event_email
+from apps.notifications.email_layout import get_from_email_for_event, render_event_email
 
 
 class Command(BaseCommand):
@@ -20,10 +20,10 @@ class Command(BaseCommand):
         parser.add_argument(
             '--to',
             type=str,
-            default='nwagbaraxtopher@gmail.com',
+            required=True,
             help='Recipient email address',
         )
-        parser.add_argument('--name', type=str, default='Alex Thompson', help='Customer full name')
+        parser.add_argument('--name', type=str, default='', help='Customer full name (required)')
         parser.add_argument(
             '--email',
             type=str,
@@ -36,6 +36,10 @@ class Command(BaseCommand):
         if not recipient:
             raise CommandError('--to is required')
 
+        display_name = (options['name'] or '').strip()
+        if not display_name:
+            raise CommandError('--name is required')
+
         if settings.EMAIL_BACKEND.endswith('console.EmailBackend'):
             raise CommandError(
                 'EMAIL_BACKEND is console (dev default). Use USE_CONSOLE_EMAIL_IN_DEV=false for real SMTP.',
@@ -43,13 +47,13 @@ class Command(BaseCommand):
 
         user_email = (options['email'] or recipient).strip()
         context = {
-            'full_name': options['name'],
+            'full_name': display_name,
             'user_email': user_email,
-            'user': SimpleNamespace(full_name=options['name'], email=user_email),
+            'user': SimpleNamespace(full_name=display_name, email=user_email),
         }
 
         subject, text_body, html_body = render_event_email('registration', context)
-        from_email = get_from_email()
+        from_email = get_from_email_for_event('registration', context)
 
         send_branded_email(
             subject=subject,
@@ -62,7 +66,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(f'Sent welcome sample to {recipient}'))
         self.stdout.write(f'  Subject: {subject}')
-        self.stdout.write(f'  Name: {options["name"]}')
+        self.stdout.write(f'  Name: {display_name}')
         self.stdout.write(f'  Sign-in email: {user_email}')
 
         smtp_user = (getattr(settings, 'EMAIL_HOST_USER', '') or '').strip().lower()
