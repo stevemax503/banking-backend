@@ -27,22 +27,6 @@ if [[ -z "${VENV_DIR}" ]]; then
   fi
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-${VENV_DIR}/bin/python}"
-PIP_BIN="${PIP_BIN:-${VENV_DIR}/bin/pip}"
-REQ_FILE="${REQ_FILE:-}"
-
-if [[ -z "${REQ_FILE}" ]]; then
-  if [[ -e "${REPO_DIR}/requirements.txt" ]]; then
-    REQ_FILE="${REPO_DIR}/requirements.txt"
-  elif [[ -e "${REPO_DIR}/requirements" ]]; then
-    REQ_FILE="${REPO_DIR}/requirements"
-  elif [[ -e "${REPO_DIR}/requirements/requirements.txt" ]]; then
-    REQ_FILE="${REPO_DIR}/requirements/requirements.txt"
-  elif [[ -e "${REPO_DIR}/requirements/base.txt" ]]; then
-    REQ_FILE="${REPO_DIR}/requirements/base.txt"
-  fi
-fi
-
 echo "==> Deploy starting"
 
 if [[ ! -d "${REPO_DIR}" ]]; then
@@ -50,12 +34,31 @@ if [[ ! -d "${REPO_DIR}" ]]; then
   exit 1
 fi
 
+PYTHON_BIN="${PYTHON_BIN:-${VENV_DIR}/bin/python}"
+PIP_BIN="${PIP_BIN:-${VENV_DIR}/bin/pip}"
+REQ_FILE="${REQ_FILE:-}"
+
 cd "${REPO_DIR}"
 
 echo "==> Pull latest code"
 git fetch --all --prune
 git checkout main
 git pull --ff-only origin main
+
+# Resolve requirements after pull (paths may not exist until latest code is on disk).
+if [[ -z "${REQ_FILE}" ]]; then
+  if [[ -e "${REPO_DIR}/requirements/prod.txt" ]]; then
+    REQ_FILE="${REPO_DIR}/requirements/prod.txt"
+  elif [[ -e "${REPO_DIR}/requirements.txt" ]]; then
+    REQ_FILE="${REPO_DIR}/requirements.txt"
+  elif [[ -e "${REPO_DIR}/requirements/base.txt" ]]; then
+    REQ_FILE="${REPO_DIR}/requirements/base.txt"
+  elif [[ -e "${REPO_DIR}/requirements/requirements.txt" ]]; then
+    REQ_FILE="${REPO_DIR}/requirements/requirements.txt"
+  elif [[ -e "${REPO_DIR}/requirements" && -f "${REPO_DIR}/requirements" ]]; then
+    REQ_FILE="${REPO_DIR}/requirements"
+  fi
+fi
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   echo "ERROR: Python venv not found/executable: ${PYTHON_BIN}" >&2
@@ -72,10 +75,10 @@ echo "==> Install backend dependencies"
 if [[ -z "${REQ_FILE}" || ! -f "${REQ_FILE}" ]]; then
   echo "ERROR: requirements file not found." >&2
   echo "Expected one of:" >&2
+  echo "  - ${REPO_DIR}/requirements/prod.txt" >&2
   echo "  - ${REPO_DIR}/requirements.txt" >&2
-  echo "  - ${REPO_DIR}/requirements" >&2
-  echo "  - ${REPO_DIR}/requirements/requirements.txt" >&2
   echo "  - ${REPO_DIR}/requirements/base.txt" >&2
+  echo "  - ${REPO_DIR}/requirements/requirements.txt" >&2
   exit 1
 fi
 "${PIP_BIN}" install -r "${REQ_FILE}"
