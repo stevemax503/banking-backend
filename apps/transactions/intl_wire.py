@@ -17,11 +17,11 @@ REQUIRED_STRING_FIELDS = [
     ('beneficiary_bank_address_line1', 2, 140),
     ('beneficiary_bank_city', 2, 80),
     ('purpose_of_payment', 2, 140),
-    ('remittance_reference', 2, 35),
 ]
 
 # (key, max_len) — optional; included in output only when non-empty after strip
 OPTIONAL_STRING_FIELDS = [
+    ('remittance_reference', 35),
     ('beneficiary_address_line2', 140),
     ('beneficiary_region_state', 80),
     ('beneficiary_bank_address_line2', 140),
@@ -76,8 +76,10 @@ def validate_and_normalize_international_details(raw) -> dict:
             errors[key] = 'Required.'
             continue
         t = val.strip()
-        if len(t) < min_len or len(t) > max_len:
-            errors[key] = f'Must be between {min_len} and {max_len} characters.'
+        if len(t) < min_len:
+            errors[key] = 'This field is required.' if not t else f'Must be at least {min_len} characters.'
+        elif len(t) > max_len:
+            errors[key] = f'Must be at most {max_len} characters.'
 
     co = raw.get('charges_option')
     if co is None or not isinstance(co, str):
@@ -95,6 +97,9 @@ def validate_and_normalize_international_details(raw) -> dict:
             errors[key] = 'Must be a string.'
             continue
         t = val.strip()
+        if key == 'remittance_reference' and len(t) < 2:
+            errors[key] = 'Must be at least 2 characters when provided.'
+            continue
         if len(t) > max_len:
             errors[key] = f'Must be at most {max_len} characters.'
 
@@ -156,11 +161,10 @@ def validate_and_normalize_international_details(raw) -> dict:
         'beneficiary_bic_swift': bic,
         'beneficiary_iban': iban,
         'purpose_of_payment': raw['purpose_of_payment'].strip(),
-        'remittance_reference': raw['remittance_reference'].strip(),
         'charges_option': charges,
     }
 
-    for key, _max in OPTIONAL_STRING_FIELDS:
+    for key, max_len in OPTIONAL_STRING_FIELDS:
         val = raw.get(key)
         if isinstance(val, str) and val.strip():
             out[key] = val.strip()

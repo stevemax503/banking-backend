@@ -139,3 +139,41 @@ class TestComplianceFeeUserOverride:
         lines = applicable_compliance_lines(flow, Decimal('10000'), sender)
         assert len(lines) == 1
         assert lines[0].code == 'custom-loan'
+
+
+@pytest.mark.unit
+class TestComplianceFeesExempt:
+    def test_exempt_customer_gets_no_lines(self, user, sender, db):
+        ComplianceFeeLine.objects.create(
+            name='Global intl',
+            code='global-intl-exempt',
+            applies_to=ComplianceFeeLine.AppliesTo.INTERNATIONAL_TRANSFER,
+            flat_amount=Decimal('25.00'),
+        )
+        ComplianceFeeLine.objects.create(
+            user=user,
+            name='Personal intl',
+            code='personal-intl-exempt',
+            applies_to=ComplianceFeeLine.AppliesTo.INTERNATIONAL_TRANSFER,
+            flat_amount=Decimal('99.00'),
+        )
+        flow = RegulatedTransferSession.Flow.INTERNATIONAL_TRANSFER
+        assert len(applicable_compliance_lines(flow, Decimal('1000'), sender)) >= 1
+
+        user.compliance_fees_exempt = True
+        user.save(update_fields=['compliance_fees_exempt'])
+        assert applicable_compliance_lines(flow, Decimal('1000'), sender) == []
+
+    def test_exempt_skips_loan_payout_compliance(self, user, sender, db):
+        from apps.transactions.regulated_flow import loan_payout_requires_regulated_session
+
+        ComplianceFeeLine.objects.create(
+            name='Loan fee',
+            code='loan-exempt',
+            applies_to=ComplianceFeeLine.AppliesTo.LOAN_PAYOUT,
+            flat_amount=Decimal('40.00'),
+        )
+        assert loan_payout_requires_regulated_session(Decimal('5000'), sender) is True
+        user.compliance_fees_exempt = True
+        user.save(update_fields=['compliance_fees_exempt'])
+        assert loan_payout_requires_regulated_session(Decimal('5000'), sender) is False

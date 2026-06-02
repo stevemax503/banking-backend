@@ -35,6 +35,7 @@ urlpatterns = [
     path('accounts/<uuid:pk>/status/', views.admin_account_status, name='admin-account-status'),
     path('accounts/<uuid:pk>/adjust/', views.admin_adjust_balance, name='admin-account-adjust'),
     path('accounts/<uuid:pk>/deposit/', views.admin_account_deposit, name='admin-account-deposit'),
+    path('accounts/<uuid:pk>/debit/', views.admin_account_debit, name='admin-account-debit'),
     path('deposit-preview/', views.admin_deposit_preview, name='admin-deposit-preview'),
 
     # Transactions

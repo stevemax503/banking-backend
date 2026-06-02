@@ -89,7 +89,7 @@ def normalize_deposit_source(deposit_method: str, raw: dict | None) -> dict[str,
 
 
 def build_deposit_narration(deposit_method: str, source: dict[str, str]) -> str:
-    """Single-line narration for transaction history (uppercase, pipe-separated)."""
+    """Legacy uppercase narration (metadata / mirrors). Prefer narration.build_deposit_system_narration."""
     method = METHOD_LABEL.get(deposit_method, deposit_method.replace('_', ' ')).upper()
 
     def part(label: str, value: str) -> str:

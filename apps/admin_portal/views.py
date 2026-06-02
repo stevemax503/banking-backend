@@ -62,6 +62,8 @@ from apps.transactions.serializers import (
     TransactionSerializer,
     TransactionFeeSerializer,
     ComplianceFeeLineSerializer,
+    AdminDepositSerializer,
+    AdminAccountDebitSerializer,
     AdminTransactionUpdateSerializer,
     AdminTransactionBulkDeleteSerializer,
 )
@@ -75,6 +77,7 @@ from apps.transactions.services import (
     deposit,
     withdraw,
     admin_deposit,
+    admin_account_debit as record_admin_account_debit,
     preview_deposit,
     AccountStatusError,
     TransactionError,
@@ -141,7 +144,7 @@ class AdminUserListView(generics.ListAPIView):
     serializer_class = AdminUserSerializer
     permission_classes = [IsAdminUser]
     search_fields = ['email', 'full_name', 'phone']
-    filterset_fields = ['role', 'kyc_status', 'is_active', 'is_locked']
+    filterset_fields = ['role', 'kyc_status', 'is_active', 'is_locked', 'compliance_fees_exempt']
 
     def get_queryset(self):
         qs = CustomUser.objects.all().order_by('-date_joined')
@@ -463,7 +466,7 @@ def admin_impersonate_customer(request, pk):
 class AdminAccountListView(generics.ListAPIView):
     serializer_class = AccountSerializer
     permission_classes = [IsAdminUser]
-    search_fields = ['account_number', 'owner__email', 'owner__full_name']
+    search_fields = ['account_number', 'iban', 'owner__email', 'owner__full_name']
     filterset_fields = ['account_type', 'status', 'currency']
 
     def get_queryset(self):
@@ -551,8 +554,6 @@ def admin_deposit_preview(request):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def admin_account_deposit(request, pk):
-    from apps.transactions.serializers import AdminDepositSerializer, TransactionSerializer
-
     try:
         account = Account.objects.select_related('owner').get(id=pk)
         assert_account_in_scope(request.user, account.id)
@@ -567,11 +568,12 @@ def admin_account_deposit(request, pk):
         tx, related = admin_deposit(
             str(account.id),
             data['amount'],
-            data['description'],
+            data.get('description', ''),
             request.user,
             deposit_method=data['deposit_method'],
             status=data['status'],
             deposit_source=data.get('deposit_source'),
+            transaction_at=data.get('transaction_at'),
         )
     except AccountStatusError as e:
         return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -597,6 +599,67 @@ def admin_account_deposit(request, pk):
             'related_transactions': TransactionSerializer(related, many=True).data,
             'fee': preview['fee'],
             'net_credit': preview['net_credit'] if tx.status == Transaction.Status.COMPLETED else '0',
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def admin_account_debit(request, pk):
+    try:
+        account = Account.objects.select_related('owner').get(id=pk)
+        assert_account_in_scope(request.user, account.id)
+    except Account.DoesNotExist:
+        return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    ser = AdminAccountDebitSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    data = ser.validated_data
+
+    intl = data.get('international_details') or {}
+    intl_clean = {k: str(v).strip() for k, v in intl.items() if str(v).strip()}
+
+    try:
+        tx = record_admin_account_debit(
+            str(account.id),
+            data['amount'],
+            data['transfer_type'],
+            request.user,
+            description=data.get('description', ''),
+            transaction_at=data.get('transaction_at'),
+            status=data['status'],
+            to_account_id=data.get('to_account_id') or '',
+            beneficiary_name=data.get('beneficiary_name', ''),
+            bank_name=data.get('bank_name', ''),
+            account_number=data.get('account_number', ''),
+            international_details=intl_clean or None,
+        )
+    except Account.DoesNotExist:
+        return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+    except AccountStatusError as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except InsufficientFundsError as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except TransactionError as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    log_action(
+        actor=request.user,
+        action=AuditLog.Action.TRANSACTION,
+        target_model='Account',
+        target_id=account.id,
+        description=(
+            f'Admin debit {data["amount"]} ({data["transfer_type"]}, {tx.status}) '
+            f'for {account.owner.email}: {tx.description}'
+        ),
+        ip_address=AuditMiddleware.get_client_ip(request),
+    )
+    return Response(
+        {
+            'detail': 'Debit recorded.',
+            'transaction': TransactionSerializer(tx).data,
+            'reference': tx.reference_number,
         },
         status=status.HTTP_201_CREATED,
     )

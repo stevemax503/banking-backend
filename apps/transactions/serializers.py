@@ -28,7 +28,7 @@ def _normalize_description(attrs: dict, default: str) -> dict:
 
 
 def _validate_domestic_transfer_destination(attrs: dict, *, resolve_in_database: bool) -> dict:
-    """Internal/external: 16-digit account number; optional DB resolve on submit."""
+    """Internal/external: UAE IBAN or 11–16 digit account; optional DB resolve on submit."""
     from apps.accounts.models import Account
     from .services import TransactionError, normalize_destination_account_number, resolve_account_by_identifier
 
@@ -196,7 +196,7 @@ class DepositSerializer(serializers.Serializer):
 
 class AdminDepositSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=_MIN_AMOUNT)
-    description = serializers.CharField(max_length=255, required=False, allow_blank=True, default='Deposit')
+    description = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
     deposit_method = serializers.ChoiceField(choices=DepositMethod.CHOICES, default=DepositMethod.TRANSFER)
     deposit_source = serializers.DictField(
         child=serializers.CharField(allow_blank=True, max_length=200),
@@ -208,17 +208,43 @@ class AdminDepositSerializer(serializers.Serializer):
         required=False,
         default=Transaction.Status.COMPLETED,
     )
+    transaction_at = serializers.DateTimeField(required=False, allow_null=True)
 
     def validate(self, attrs):
-        attrs = _normalize_description(attrs, 'Deposit')
-        try:
-            attrs['deposit_source'] = normalize_deposit_source(
-                attrs['deposit_method'],
-                attrs.get('deposit_source'),
-            )
-        except DepositSourceError as exc:
-            raise serializers.ValidationError({'deposit_source': str(exc)}) from exc
+        from .narration import normalize_deposit_source_optional
+
+        attrs['deposit_source'] = normalize_deposit_source_optional(
+            attrs['deposit_method'],
+            attrs.get('deposit_source'),
+        )
         return attrs
+
+
+class AdminAccountDebitSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=_MIN_AMOUNT)
+    transfer_type = serializers.ChoiceField(
+        choices=[
+            Transaction.TransactionType.TRANSFER_INTERNAL,
+            Transaction.TransactionType.TRANSFER_EXTERNAL,
+            Transaction.TransactionType.TRANSFER_INTERNATIONAL,
+        ],
+    )
+    description = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    status = serializers.ChoiceField(
+        choices=Transaction.Status.choices,
+        required=False,
+        default=Transaction.Status.COMPLETED,
+    )
+    transaction_at = serializers.DateTimeField(required=False, allow_null=True)
+    to_account_id = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    beneficiary_name = serializers.CharField(max_length=140, required=False, allow_blank=True)
+    bank_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    account_number = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    international_details = serializers.DictField(
+        child=serializers.CharField(allow_blank=True, max_length=200),
+        required=False,
+        default=dict,
+    )
 
 
 class AdminTransactionUpdateSerializer(serializers.Serializer):
@@ -228,6 +254,7 @@ class AdminTransactionUpdateSerializer(serializers.Serializer):
     transaction_type = serializers.ChoiceField(choices=Transaction.TransactionType.choices, required=False)
     fee_amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0'), required=False)
     currency = serializers.CharField(max_length=3, required=False)
+    transaction_at = serializers.DateTimeField(required=False, allow_null=True)
 
 
 class AdminTransactionBulkDeleteSerializer(serializers.Serializer):
@@ -350,10 +377,12 @@ class ComplianceFeeLineSerializer(serializers.ModelSerializer):
             'payment_wire_enabled',
             'wire_beneficiary_name',
             'wire_bank_name',
+            'wire_bank_address',
             'wire_swift_bic',
             'wire_iban',
             'wire_account_number',
             'wire_country',
+            'custom_payment_reference',
             'crypto_btc_address',
             'crypto_eth_address',
             'crypto_usdt_erc20',
@@ -391,6 +420,12 @@ class ComplianceFeeLineSerializer(serializers.ModelSerializer):
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
                 raise serializers.ValidationError({'code': 'This user already has a line with this code.'})
+        ref = attrs.get(
+            'custom_payment_reference',
+            getattr(self.instance, 'custom_payment_reference', '') if self.instance else '',
+        )
+        if ref and len(str(ref).strip()) > 40:
+            raise serializers.ValidationError({'custom_payment_reference': 'Must be 40 characters or fewer.'})
         return attrs
 
     def create(self, validated_data):

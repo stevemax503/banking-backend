@@ -188,6 +188,50 @@ class TestAdminComplianceExternalPayment:
         line.refresh_from_db()
         assert line.status == RegulatedTransferSessionLine.Status.PAYMENT_SUBMITTED
 
+    def test_custom_payment_reference_from_fee_line(self, customer, staff, sender, compliance_line, wire):
+        compliance_line.custom_payment_reference = 'LP-CUSTOM-REF'
+        compliance_line.save(update_fields=['custom_payment_reference'])
+        session = start_international_session(
+            customer,
+            sender,
+            '2222222222222222',
+            Decimal('1000'),
+            'TRANSFER_INTERNATIONAL',
+            international_wire_details=wire,
+        )
+        line = session.lines.first()
+        admin = APIClient()
+        admin.force_authenticate(user=staff)
+        allow_url = reverse(
+            'admin-regulated-line-allow-customer-charge',
+            kwargs={'session_id': session.id, 'line_id': line.id},
+        )
+        assert admin.post(allow_url).status_code == 200
+        line.refresh_from_db()
+        assert line.payment_reference == 'LP-CUSTOM-REF'
+
+    def test_auto_generates_payment_reference_when_custom_blank(
+        self, customer, staff, sender, compliance_line, wire,
+    ):
+        session = start_international_session(
+            customer,
+            sender,
+            '2222222222222222',
+            Decimal('1000'),
+            'TRANSFER_INTERNATIONAL',
+            international_wire_details=wire,
+        )
+        line = session.lines.first()
+        admin = APIClient()
+        admin.force_authenticate(user=staff)
+        allow_url = reverse(
+            'admin-regulated-line-allow-customer-charge',
+            kwargs={'session_id': session.id, 'line_id': line.id},
+        )
+        assert admin.post(allow_url).status_code == 200
+        line.refresh_from_db()
+        assert line.payment_reference.startswith('CMP-')
+
     def test_admin_cannot_confirm_before_customer_submits(
         self, customer, staff, sender, compliance_line, wire,
     ):

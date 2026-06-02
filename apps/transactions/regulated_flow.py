@@ -77,6 +77,13 @@ def _resolve_compliance_user(account: Account | None, user=None):
     return None
 
 
+def is_compliance_fees_exempt(user) -> bool:
+    """True when admin has exempted this customer from all compliance fee lines."""
+    if user is None:
+        return False
+    return bool(getattr(user, 'compliance_fees_exempt', False))
+
+
 def applicable_compliance_lines(
     flow: str,
     principal: Decimal,
@@ -86,8 +93,11 @@ def applicable_compliance_lines(
     """
     Return compliance fee lines for a flow and principal amount.
     Per-user lines for this flow take precedence; otherwise global lines for this flow are used.
+    Exempt customers receive no lines (international transfer and loan payout proceed without compliance).
     """
     customer = _resolve_compliance_user(account, user)
+    if customer is not None and is_compliance_fees_exempt(customer):
+        return []
     p = Decimal(str(principal))
     base_qs = ComplianceFeeLine.objects.filter(is_active=True, min_principal_threshold__lte=p).order_by(
         'sort_order', 'name',
@@ -525,6 +535,9 @@ DEFAULT_COMPLIANCE_CUSTOMER_MESSAGE = 'Please wait for your bank to authorize pa
 
 
 def generate_payment_reference(line: RegulatedTransferSessionLine) -> str:
+    custom = (line.fee_line.custom_payment_reference or '').strip()
+    if custom:
+        return custom[:40]
     code = (line.fee_line.code or 'FEE').upper().replace('-', '')[:8]
     return f'CMP-{code}-{line.id.hex[:6].upper()}'
 
@@ -550,6 +563,7 @@ def compliance_payment_instructions_serialized(fee_line: ComplianceFeeLine) -> d
         wire = {
             'beneficiary_name': fee_line.wire_beneficiary_name.strip(),
             'bank_name': fee_line.wire_bank_name.strip(),
+            'bank_address': fee_line.wire_bank_address.strip(),
             'swift_bic': fee_line.wire_swift_bic.strip(),
             'iban': fee_line.wire_iban.strip(),
             'account_number': fee_line.wire_account_number.strip(),

@@ -100,6 +100,10 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         default=AdminAccessScope.ALL,
         help_text='Admin desk only: ALL = every customer; SELECTED = assigned customers (all their accounts).',
     )
+    compliance_fees_exempt = models.BooleanField(
+        default=False,
+        help_text='When true, skip all compliance fee lines for international transfers and loan payouts.',
+    )
 
     objects = CustomUserManager()
 

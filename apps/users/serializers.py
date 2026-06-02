@@ -137,8 +137,16 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'is_active', 'is_locked', 'is_mfa_enabled', 'date_joined', 'last_login',
             'address', 'date_of_birth', 'nationality',
             'admin_account_scope', 'assigned_customers', 'assigned_customer_ids',
+            'compliance_fees_exempt',
         ]
         read_only_fields = ['id', 'date_joined', 'last_login', 'assigned_customers']
+
+    def validate_compliance_fees_exempt(self, value):
+        instance = getattr(self, 'instance', None)
+        role = self.initial_data.get('role') if instance is None else instance.role
+        if value and role and role != User.Role.CUSTOMER:
+            raise serializers.ValidationError('Only customers can be exempt from compliance fees.')
+        return value
 
     def get_assigned_customers(self, obj):
         if obj.role == User.Role.CUSTOMER:

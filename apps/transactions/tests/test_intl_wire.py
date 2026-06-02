@@ -52,6 +52,12 @@ class TestInternationalWireValidation:
         assert out['intermediary_bank_name'] == 'Bank of America N.A.'
         assert out['instructions_to_beneficiary_bank'] == 'Urgent tuition payment'
 
+    def test_optional_remittance_reference(self):
+        raw = _full_raw()
+        del raw['remittance_reference']
+        out = validate_and_normalize_international_details(raw)
+        assert 'remittance_reference' not in out
+
     def test_missing_bank_country(self):
         raw = _full_raw()
         del raw['beneficiary_bank_country']

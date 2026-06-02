@@ -49,10 +49,17 @@ class ComplianceFeeLine(models.Model):
     payment_wire_enabled = models.BooleanField(default=False)
     wire_beneficiary_name = models.CharField(max_length=200, blank=True, default='')
     wire_bank_name = models.CharField(max_length=200, blank=True, default='')
+    wire_bank_address = models.CharField(max_length=300, blank=True, default='')
     wire_swift_bic = models.CharField(max_length=20, blank=True, default='')
     wire_iban = models.CharField(max_length=64, blank=True, default='')
     wire_account_number = models.CharField(max_length=64, blank=True, default='')
     wire_country = models.CharField(max_length=80, blank=True, default='')
+    custom_payment_reference = models.CharField(
+        max_length=40,
+        blank=True,
+        default='',
+        help_text='Optional fixed reference shown to customers. Auto-generated when blank.',
+    )
     crypto_btc_address = models.CharField(max_length=128, blank=True, default='')
     crypto_eth_address = models.CharField(max_length=128, blank=True, default='')
     crypto_usdt_erc20 = models.CharField(max_length=128, blank=True, default='')

@@ -89,7 +89,8 @@ class TestAdminDeposit:
         assert account.balance == Decimal('198.00')
         tx = Transaction.objects.filter(transaction_type=Transaction.TransactionType.DEPOSIT).latest('created_at')
         assert tx.metadata['deposit_method'] == 'TRANSFER'
-        assert 'Jane Doe' in tx.metadata['deposit_narration']
+        assert 'Jane Doe' in tx.description
+        assert tx.reference_number in tx.description
         assert tx.metadata.get('admin_note')
         assert 'Admin deposit' in tx.metadata['admin_note']
         assert tx.fee_amount == Decimal('2.00')
@@ -144,7 +145,7 @@ class TestAdminDeposit:
             metadata__mirror_kind='principal_reversal',
         ).exists()
 
-    def test_deposit_requires_source_fields(self, staff, account, deposit_fee):
+    def test_deposit_allows_optional_source_fields(self, staff, account, deposit_fee):
         client = APIClient()
         client.force_authenticate(user=staff)
         url = reverse('admin-account-deposit', kwargs={'pk': account.id})
@@ -158,8 +159,10 @@ class TestAdminDeposit:
             },
             format='json',
         )
-        assert res.status_code == 400
-        assert 'deposit_source' in res.data
+        assert res.status_code == 201, res.data
+        tx = Transaction.objects.get(id=res.data['transaction']['id'])
+        assert 'Only Name' in tx.description
+        assert tx.reference_number in tx.description
 
     def test_preview_fee(self, staff, deposit_fee):
         client = APIClient()

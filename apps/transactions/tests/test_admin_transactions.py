@@ -7,7 +7,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Account, Currency
-from apps.transactions.models import Transaction
+from apps.transactions.models import Transaction, TransactionFee
+from apps.transactions.services import _record_fee
 from apps.users.models import CustomUser
 
 User = get_user_model()
@@ -118,6 +119,52 @@ class TestAdminTransactions:
         assert res.status_code == 200
         assert res.data['count'] >= 3
         assert len(res.data['results']) == 2
+
+    def test_admin_update_syncs_fee_child_amount_and_date(self, staff, customer, account):
+        TransactionFee.objects.create(
+            fee_type=TransactionFee.FeeType.TRANSFER_LOCAL,
+            flat_amount=Decimal('2.00'),
+            percentage=Decimal('0'),
+        )
+        account.balance = Decimal('1000.00')
+        account.available_balance = Decimal('1000.00')
+        account.save(update_fields=['balance', 'available_balance'])
+
+        parent = Transaction.objects.create(
+            transaction_type=Transaction.TransactionType.TRANSFER_EXTERNAL,
+            amount=Decimal('100.00'),
+            currency='USD',
+            from_account=account,
+            status=Transaction.Status.COMPLETED,
+            description='Transfer to BobTXN0000000001',
+            fee_amount=Decimal('2.00'),
+            initiated_by=staff,
+            completed_at=timezone.now(),
+        )
+        _record_fee(account, Decimal('2.00'), parent, staff)
+        fee_tx = Transaction.objects.get(metadata__parent_transaction_id=str(parent.id))
+
+        new_when = timezone.datetime(2025, 3, 15, 14, 30, tzinfo=timezone.utc)
+        client = APIClient()
+        client.force_authenticate(user=staff)
+        url = reverse('admin-transaction-update', kwargs={'pk': parent.id})
+        res = client.patch(
+            url,
+            {
+                'amount': '200.00',
+                'transaction_at': new_when.isoformat().replace('+00:00', 'Z'),
+            },
+            format='json',
+        )
+        assert res.status_code == 200, res.data
+        parent.refresh_from_db()
+        fee_tx.refresh_from_db()
+        assert parent.fee_amount == Decimal('2.00')
+        assert parent.amount == Decimal('200.00')
+        assert fee_tx.amount == Decimal('2.00')
+        assert parent.created_at == new_when
+        assert fee_tx.created_at == new_when
+        assert fee_tx.completed_at == new_when
 
     def test_admin_delete_with_reversal_child(self, staff, customer, account):
         original = Transaction.objects.create(

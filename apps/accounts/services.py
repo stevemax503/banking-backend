@@ -7,11 +7,9 @@ import random
 from django.conf import settings
 
 from .models import Account, Currency
+from .uae_iban import DOMESTIC_ACCOUNT_NUMBER_LENGTH
 
 UAE_BANK_CODE = getattr(settings, 'UAE_BANK_CODE', '033')
-
-# SafaPay Bank domestic account numbers (used by transfers, IBAN, and UI validation).
-DOMESTIC_ACCOUNT_NUMBER_LENGTH = 16
 
 
 def get_or_create_default_currency() -> Currency:

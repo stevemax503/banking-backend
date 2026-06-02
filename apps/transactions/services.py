@@ -9,7 +9,16 @@ from django.db import transaction as db_transaction
 from django.utils import timezone
 
 from apps.accounts.models import Account
-from apps.accounts.services import DOMESTIC_ACCOUNT_NUMBER_LENGTH
+from apps.accounts.uae_iban import (
+    DOMESTIC_ACCOUNT_NUMBER_MAX_LENGTH,
+    DOMESTIC_ACCOUNT_NUMBER_MIN_LENGTH,
+    UaeAccountIdentifierError,
+    compact_identifier,
+    extract_domestic_from_uae_iban,
+    is_valid_domestic_account_number,
+    is_valid_uae_iban,
+    normalize_to_domestic_account_number,
+)
 from .models import Transaction, TransactionFee, ExchangeRate
 from .regulated_flow import applicable_compliance_lines, international_requires_regulated_session
 from .regulated_models import RegulatedTransferSession
@@ -27,18 +36,16 @@ class TransactionError(Exception):
     pass
 
 
-# Single source of truth: apps.accounts.services.DOMESTIC_ACCOUNT_NUMBER_LENGTH
-DESTINATION_ACCOUNT_NUMBER_LENGTH = DOMESTIC_ACCOUNT_NUMBER_LENGTH
+DESTINATION_ACCOUNT_NUMBER_MIN_LENGTH = DOMESTIC_ACCOUNT_NUMBER_MIN_LENGTH
+DESTINATION_ACCOUNT_NUMBER_MAX_LENGTH = DOMESTIC_ACCOUNT_NUMBER_MAX_LENGTH
 
 
 def normalize_destination_account_number(raw: str) -> str:
-    """Return exactly 16 digits; raise TransactionError if invalid."""
-    digits = re.sub(r'\D', '', (raw or '').strip())
-    if len(digits) != DESTINATION_ACCOUNT_NUMBER_LENGTH:
-        raise TransactionError(
-            f'Account number must be exactly {DESTINATION_ACCOUNT_NUMBER_LENGTH} digits.',
-        )
-    return digits
+    """Accept UAE IBAN or 11–16 digit domestic account number."""
+    try:
+        return normalize_to_domestic_account_number(raw)
+    except UaeAccountIdentifierError as exc:
+        raise TransactionError(str(exc)) from exc
 
 
 def _get_fee(tx_type: str, amount: Decimal) -> Decimal:
@@ -78,9 +85,24 @@ def _transfer_fee_line_dict(fee_type: str, fee: Decimal, fee_row: TransactionFee
     }
 
 
+def _resolve_by_domestic_account_number(digits: str):
+    """Exact match, then unique suffix match when user enters 11–15 digits of a longer stored number."""
+    if not is_valid_domestic_account_number(digits):
+        return None
+    qs = Account.objects.filter(account_number=digits).select_related('currency', 'owner')
+    acc = qs.first()
+    if acc:
+        return acc
+    if len(digits) < DOMESTIC_ACCOUNT_NUMBER_MAX_LENGTH:
+        suffix_qs = Account.objects.filter(account_number__endswith=digits).select_related('currency', 'owner')
+        if suffix_qs.count() == 1:
+            return suffix_qs.first()
+    return None
+
+
 def resolve_account_by_identifier(raw: str):
     """
-    Resolve an account by UUID string or by account_number (case-insensitive).
+    Resolve an account by UUID, UAE IBAN, or 11–16 digit account_number.
     Returns Account or None.
     """
     if not raw or not str(raw).strip():
@@ -91,9 +113,19 @@ def resolve_account_by_identifier(raw: str):
         return Account.objects.filter(id=uid).select_related('currency', 'owner').first()
     except (ValueError, TypeError, AttributeError):
         pass
-    normalized = ''.join(ch for ch in s if ch.isdigit())
-    if normalized:
-        acc = Account.objects.filter(account_number=normalized).select_related('currency', 'owner').first()
+    compact = compact_identifier(s)
+    if compact.startswith('AE') and is_valid_uae_iban(compact):
+        acc = Account.objects.filter(iban__iexact=compact).select_related('currency', 'owner').first()
+        if acc:
+            return acc
+        domestic = extract_domestic_from_uae_iban(compact)
+        return _resolve_by_domestic_account_number(domestic)
+    try:
+        domestic = normalize_destination_account_number(s)
+    except TransactionError:
+        domestic = None
+    if domestic:
+        acc = _resolve_by_domestic_account_number(domestic)
         if acc:
             return acc
     return Account.objects.filter(account_number__iexact=s).select_related('currency', 'owner').first()
@@ -379,6 +411,19 @@ def record_outbound_transfer(
     if international_wire_details:
         metadata['international_wire'] = dict(international_wire_details)
 
+    user_memo = (description or '').strip()
+    if user_memo.lower() in ('', 'transfer'):
+        user_memo = ''
+    holder = (metadata.get('recipient_account_holder_name') or '').strip()
+    bank = (metadata.get('external_bank_name') or '').strip()
+    system = build_transfer_out_system_narration(
+        tx_type,
+        beneficiary_name=holder,
+        bank_name=bank,
+        destination_account_number=dest_number,
+    )
+    metadata['system_narration'] = system
+
     tx = Transaction.objects.create(
         transaction_type=tx_type,
         amount=amount,
@@ -386,7 +431,7 @@ def record_outbound_transfer(
         from_account=from_account,
         to_account=None,
         status=Transaction.Status.COMPLETED,
-        description=description or 'Transfer',
+        description='Transfer',
         fee_amount=fee,
         exchange_rate=exchange_rate,
         initiated_by=initiated_by,
@@ -394,6 +439,7 @@ def record_outbound_transfer(
         completed_at=timezone.now(),
         metadata=metadata,
     )
+    finalize_transaction_description(tx, system, user_memo)
 
     from_account.balance -= total_debit
     from_account.available_balance -= total_debit
@@ -445,6 +491,18 @@ def _get_exchange_rate_for_preview(from_currency: str, to_currency: str) -> Deci
 
 
 from .deposit_source import DepositMethod, build_deposit_narration, normalize_deposit_source
+from .booking import apply_transaction_booking
+from .narration import (
+    build_deposit_system_narration,
+    build_fee_system_narration,
+    build_reversal_system_narration,
+    build_transfer_out_system_narration,
+    finalize_transaction_description,
+    normalize_deposit_source_optional,
+)
+
+# Admin outbound placeholder when beneficiary account number omitted (16 digits).
+ADMIN_OUTBOUND_PLACEHOLDER_ACCOUNT = '9999999999999999'
 
 
 def preview_deposit(amount: Decimal) -> dict:
@@ -478,40 +536,51 @@ def _mirror_failed_deposit_lines(
     }
     related: list[Transaction] = []
 
+    rev_system = build_reversal_system_narration(
+        deposit_tx.reference_number,
+        deposit_tx.description,
+    )
     principal_rev = Transaction.objects.create(
         transaction_type=Transaction.TransactionType.REVERSAL,
         amount=deposit_tx.amount,
         currency=account.currency.code,
         from_account=account,
         status=Transaction.Status.FAILED,
-        description=f'REVERSAL · {deposit_narration}',
+        description='Reversal',
         fee_amount=Decimal('0'),
         initiated_by=initiated_by,
         original_transaction=deposit_tx,
         metadata={
             **base_meta,
             'mirror_kind': 'principal_reversal',
-            'deposit_narration': f'REVERSAL · {deposit_narration}',
+            'deposit_narration': rev_system,
         },
     )
+    finalize_transaction_description(principal_rev, rev_system)
     related.append(principal_rev)
 
     if fee > 0:
+        fee_system = build_fee_system_narration(deposit_tx.reference_number)
         fee_tx = Transaction.objects.create(
             transaction_type=Transaction.TransactionType.FEE,
             amount=fee,
             currency=account.currency.code,
             from_account=account,
             status=Transaction.Status.FAILED,
-            description=f'DEPOSIT FEE · FAILED {deposit_tx.reference_number}',
+            description='Service fee',
             fee_amount=Decimal('0'),
             initiated_by=initiated_by,
             original_transaction=deposit_tx,
             metadata={
                 **base_meta,
                 'mirror_kind': 'fee',
-                'deposit_narration': f'DEPOSIT FEE · FAILED · {deposit_tx.reference_number}',
+                'deposit_narration': fee_system,
             },
+        )
+        finalize_transaction_description(fee_tx, fee_system)
+        fee_rev_system = build_reversal_system_narration(
+            fee_tx.reference_number,
+            fee_system,
         )
         fee_rev = Transaction.objects.create(
             transaction_type=Transaction.TransactionType.REVERSAL,
@@ -519,16 +588,17 @@ def _mirror_failed_deposit_lines(
             currency=account.currency.code,
             to_account=account,
             status=Transaction.Status.FAILED,
-            description=f'REVERSAL · DEPOSIT FEE {deposit_tx.reference_number}',
+            description='Reversal',
             fee_amount=Decimal('0'),
             initiated_by=initiated_by,
             original_transaction=fee_tx,
             metadata={
                 **base_meta,
                 'mirror_kind': 'fee_reversal',
-                'deposit_narration': f'REVERSAL · DEPOSIT FEE · {deposit_tx.reference_number}',
+                'deposit_narration': fee_rev_system,
             },
         )
+        finalize_transaction_description(fee_rev, fee_rev_system)
         related.extend([fee_tx, fee_rev])
 
     return related
@@ -546,6 +616,7 @@ def admin_deposit(
     audit_note: str = '',
     deposit_source: dict | None = None,
     idempotency_key: str | None = None,
+    transaction_at=None,
 ) -> tuple[Transaction, list[Transaction]]:
     if idempotency_key:
         existing = Transaction.objects.filter(idempotency_key=idempotency_key).first()
@@ -573,10 +644,12 @@ def admin_deposit(
     credit_balance = tx_status == Transaction.Status.COMPLETED
     net_amount = amount - fee if credit_balance else Decimal('0')
 
-    source = normalize_deposit_source(deposit_method, deposit_source)
-    narration = build_deposit_narration(deposit_method, source)
-    custom = (description or '').strip()
-    final_description = custom if custom and custom.lower() != 'deposit' else narration
+    source = normalize_deposit_source_optional(deposit_method, deposit_source)
+    system_narration = build_deposit_system_narration(deposit_method, source)
+    legacy_narration = build_deposit_narration(deposit_method, source)
+    user_memo = (description or '').strip()
+    if user_memo.lower() in ('', 'deposit'):
+        user_memo = ''
 
     from .admin_transaction import build_admin_deposit_audit_note
 
@@ -588,7 +661,8 @@ def admin_deposit(
     metadata = {
         'deposit_method': deposit_method,
         'deposit_source': source,
-        'deposit_narration': narration,
+        'deposit_narration': legacy_narration,
+        'system_narration': system_narration,
         'admin_deposit': True,
         'admin_note': audit_note,
     }
@@ -599,18 +673,19 @@ def admin_deposit(
         currency=account.currency.code,
         to_account=account,
         status=tx_status,
-        description=final_description,
+        description='Deposit',
         fee_amount=fee,
         initiated_by=initiated_by,
         idempotency_key=idempotency_key,
-        completed_at=timezone.now() if credit_balance else None,
+        completed_at=None,
         metadata=metadata,
     )
+    finalize_transaction_description(tx, system_narration, user_memo)
 
     related: list[Transaction] = []
     if tx_status == Transaction.Status.FAILED:
         related = _mirror_failed_deposit_lines(
-            account, tx, fee, initiated_by, deposit_method, source, narration,
+            account, tx, fee, initiated_by, deposit_method, source, system_narration,
         )
 
     if credit_balance:
@@ -620,7 +695,186 @@ def admin_deposit(
         if fee > 0:
             _record_fee(account, fee, tx, initiated_by)
 
+    if transaction_at is not None:
+        apply_transaction_booking(tx, transaction_at, settled=credit_balance)
+        for rel in related:
+            apply_transaction_booking(rel, transaction_at, settled=False)
+
     return tx, related
+
+
+@db_transaction.atomic
+def admin_account_debit(
+    from_account_id: str,
+    amount: Decimal,
+    transfer_type: str,
+    initiated_by,
+    *,
+    description: str = '',
+    transaction_at=None,
+    status: str | None = None,
+    to_account_id: str | None = None,
+    beneficiary_name: str = '',
+    bank_name: str = '',
+    account_number: str = '',
+    international_details: dict | None = None,
+    idempotency_key: str | None = None,
+) -> Transaction:
+    """Admin-initiated outbound transfer (internal / external / international)."""
+    if idempotency_key:
+        existing = Transaction.objects.filter(idempotency_key=idempotency_key).first()
+        if existing:
+            return existing
+
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        raise TransactionError('Amount must be positive.')
+
+    valid_types = {
+        Transaction.TransactionType.TRANSFER_INTERNAL,
+        Transaction.TransactionType.TRANSFER_EXTERNAL,
+        Transaction.TransactionType.TRANSFER_INTERNATIONAL,
+    }
+    tx_type = str(transfer_type).upper()
+    if tx_type not in valid_types:
+        raise TransactionError('Invalid transfer type.')
+
+    tx_status = str(status or Transaction.Status.COMPLETED).upper()
+    valid_statuses = {c[0] for c in Transaction.Status.choices}
+    if tx_status not in valid_statuses:
+        raise TransactionError('Invalid transaction status.')
+
+    user_memo = (description or '').strip()
+    if user_memo.lower() in ('', 'transfer', 'withdrawal'):
+        user_memo = ''
+
+    credit_balance = tx_status == Transaction.Status.COMPLETED
+
+    internal_dest = (to_account_id or account_number or '').strip()
+    if tx_type == Transaction.TransactionType.TRANSFER_INTERNAL and internal_dest:
+        to_account = resolve_account_by_identifier(internal_dest)
+        if not to_account:
+            raise TransactionError('Destination account not found.')
+        if str(to_account.id) == str(from_account_id):
+            raise TransactionError('Source and destination accounts must be different.')
+
+        holder = (beneficiary_name or '').strip() or (
+            getattr(to_account.owner, 'full_name', None) or getattr(to_account.owner, 'email', '')
+        )
+        system = build_transfer_out_system_narration(
+            tx_type,
+            beneficiary_name=holder,
+            to_account_number=to_account.account_number,
+        )
+        recipient_meta = {
+            'recipient_account_holder_name': holder,
+            'destination_account_number': to_account.account_number,
+            'admin_debit': True,
+        }
+        recipient_meta['system_narration'] = system
+
+        if credit_balance:
+            tx = transfer(
+                from_account_id,
+                str(to_account.id),
+                amount,
+                user_memo,
+                initiated_by,
+                tx_type=tx_type,
+                idempotency_key=idempotency_key,
+                recipient_metadata=recipient_meta,
+            )
+            finalize_transaction_description(tx, system, user_memo)
+        else:
+            from_account = Account.objects.select_for_update().get(id=from_account_id)
+            if not from_account.is_active:
+                raise AccountStatusError('Source account is not active.')
+            fee = _get_fee(_transfer_fee_type(tx_type), amount)
+            tx = Transaction.objects.create(
+                transaction_type=tx_type,
+                amount=amount,
+                currency=from_account.currency.code,
+                from_account=from_account,
+                to_account=to_account,
+                status=tx_status,
+                description='Transfer',
+                fee_amount=fee,
+                exchange_rate=Decimal('1'),
+                initiated_by=initiated_by,
+                idempotency_key=idempotency_key,
+                metadata=recipient_meta,
+            )
+            finalize_transaction_description(tx, system, user_memo)
+    else:
+        dest_raw = (account_number or '').strip()
+        if dest_raw:
+            dest_number = normalize_destination_account_number(dest_raw)
+        else:
+            dest_number = ADMIN_OUTBOUND_PLACEHOLDER_ACCOUNT
+
+        recipient_meta = build_transfer_recipient_metadata(
+            transfer_type=tx_type,
+            to_account_number=dest_number,
+            account_holder_name=beneficiary_name,
+            external_bank_name=bank_name,
+        )
+        recipient_meta['admin_debit'] = True
+        intl_wire = None
+        if tx_type == Transaction.TransactionType.TRANSFER_INTERNATIONAL and international_details:
+            intl_wire = {k: v for k, v in international_details.items() if v}
+
+        system = build_transfer_out_system_narration(
+            tx_type,
+            beneficiary_name=beneficiary_name,
+            bank_name=bank_name,
+            destination_account_number=dest_number,
+        )
+
+        if not credit_balance:
+            from_account = Account.objects.select_for_update().get(id=from_account_id)
+            metadata = dict(recipient_meta)
+            metadata['destination_account_number'] = dest_number
+            metadata['outbound_transfer'] = True
+            metadata['system_narration'] = system
+            if intl_wire:
+                metadata['international_wire'] = intl_wire
+            tx = Transaction.objects.create(
+                transaction_type=tx_type,
+                amount=amount,
+                currency=from_account.currency.code,
+                from_account=from_account,
+                to_account=None,
+                status=tx_status,
+                description='Transfer',
+                fee_amount=Decimal('0'),
+                exchange_rate=Decimal('1'),
+                initiated_by=initiated_by,
+                idempotency_key=idempotency_key,
+                metadata=metadata,
+            )
+            finalize_transaction_description(tx, system, user_memo)
+        else:
+            tx = record_outbound_transfer(
+                from_account_id,
+                dest_number,
+                amount,
+                user_memo,
+                initiated_by,
+                tx_type=tx_type,
+                idempotency_key=idempotency_key,
+                recipient_metadata=recipient_meta,
+                international_wire_details=intl_wire,
+            )
+            meta = dict(tx.metadata or {})
+            meta['system_narration'] = system
+            tx.metadata = meta
+            tx.save(update_fields=['metadata'])
+            finalize_transaction_description(tx, system, user_memo)
+
+    if transaction_at is not None:
+        apply_transaction_booking(tx, transaction_at, settled=credit_balance)
+
+    return tx
 
 
 @db_transaction.atomic
@@ -757,6 +1011,26 @@ def transfer(
     if tx_type == Transaction.TransactionType.TRANSFER_INTERNATIONAL and international_wire_details:
         metadata['international_wire'] = dict(international_wire_details)
 
+    user_memo = (description or '').strip()
+    if user_memo.lower() in ('', 'transfer'):
+        user_memo = ''
+    holder = ''
+    if recipient_metadata:
+        holder = (recipient_metadata.get('recipient_account_holder_name') or '').strip()
+    if not holder and to_account.owner:
+        holder = (getattr(to_account.owner, 'full_name', None) or getattr(to_account.owner, 'email', '') or '').strip()
+    bank = (metadata.get('external_bank_name') or '').strip() if metadata else ''
+    system = build_transfer_out_system_narration(
+        tx_type,
+        beneficiary_name=holder,
+        bank_name=bank,
+        to_account_number=to_account.account_number,
+    )
+    if metadata is None:
+        metadata = {}
+    metadata = dict(metadata)
+    metadata['system_narration'] = system
+
     tx = Transaction.objects.create(
         transaction_type=tx_type,
         amount=amount,
@@ -764,7 +1038,7 @@ def transfer(
         from_account=from_account,
         to_account=to_account,
         status=Transaction.Status.COMPLETED,
-        description=description or 'Transfer',
+        description='Transfer',
         fee_amount=fee,
         exchange_rate=exchange_rate,
         initiated_by=initiated_by,
@@ -772,6 +1046,7 @@ def transfer(
         completed_at=timezone.now(),
         metadata=metadata,
     )
+    finalize_transaction_description(tx, system, user_memo)
 
     from_account.balance -= total_debit
     from_account.available_balance -= total_debit
@@ -933,6 +1208,7 @@ def reverse_transaction(transaction_id: str, reversed_by) -> Transaction:
     if original.reversals.exists():
         raise TransactionError('Transaction has already been reversed.')
 
+    rev_system = build_reversal_system_narration(original.reference_number, original.description)
     reversal = Transaction.objects.create(
         transaction_type=Transaction.TransactionType.REVERSAL,
         amount=original.amount,
@@ -940,13 +1216,14 @@ def reverse_transaction(transaction_id: str, reversed_by) -> Transaction:
         from_account=original.to_account,
         to_account=original.from_account,
         status=Transaction.Status.COMPLETED,
-        description=f'Reversal of {original.reference_number}',
+        description='Reversal',
         fee_amount=0,
         initiated_by=reversed_by,
         reversed_by=reversed_by,
         original_transaction=original,
         completed_at=timezone.now(),
     )
+    finalize_transaction_description(reversal, rev_system)
 
     if original.to_account:
         acc = Account.objects.select_for_update().get(id=original.to_account.id)
@@ -967,14 +1244,22 @@ def reverse_transaction(transaction_id: str, reversed_by) -> Transaction:
 
 
 def _record_fee(account, fee_amount, parent_tx, initiated_by):
-    Transaction.objects.create(
+    fee_system = build_fee_system_narration(parent_tx.reference_number)
+    parent_booked = parent_tx.completed_at or parent_tx.created_at
+    fee_tx = Transaction.objects.create(
         transaction_type=Transaction.TransactionType.FEE,
         amount=fee_amount,
         currency=account.currency.code,
         from_account=account,
-        status=Transaction.Status.COMPLETED,
-        description=f'Fee for {parent_tx.reference_number}',
+        status=parent_tx.status,
+        description='Service fee',
         fee_amount=0,
         initiated_by=initiated_by,
-        completed_at=timezone.now(),
+        created_at=parent_booked,
+        completed_at=parent_booked if parent_tx.status == Transaction.Status.COMPLETED else None,
+        metadata={
+            'parent_transaction_id': str(parent_tx.id),
+            'fee_for_reference': parent_tx.reference_number,
+        },
     )
+    finalize_transaction_description(fee_tx, fee_system)
