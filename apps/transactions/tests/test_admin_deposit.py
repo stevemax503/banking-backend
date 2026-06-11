@@ -3,6 +3,7 @@ import pytest
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Account, Currency
@@ -163,6 +164,34 @@ class TestAdminDeposit:
         tx = Transaction.objects.get(id=res.data['transaction']['id'])
         assert 'Only Name' in tx.description
         assert tx.reference_number in tx.description
+
+    def test_deposit_fee_shares_assigned_transaction_at(self, staff, account, deposit_fee):
+        client = APIClient()
+        client.force_authenticate(user=staff)
+        booked = timezone.datetime(2026, 6, 1, 17, 0, tzinfo=timezone.utc)
+        url = reverse('admin-account-deposit', kwargs={'pk': account.id})
+        res = client.post(
+            url,
+            {
+                'amount': '280.00',
+                'description': 'Deposit',
+                'deposit_method': 'TRANSFER',
+                'deposit_source': TRANSFER_SOURCE,
+                'status': 'COMPLETED',
+                'transaction_at': booked.isoformat().replace('+00:00', 'Z'),
+            },
+            format='json',
+        )
+        assert res.status_code == 201, res.data
+        deposit = Transaction.objects.get(id=res.data['transaction']['id'])
+        fee_tx = Transaction.objects.get(
+            transaction_type=Transaction.TransactionType.FEE,
+            metadata__parent_transaction_id=str(deposit.id),
+        )
+        assert deposit.created_at == booked
+        assert deposit.completed_at == booked
+        assert fee_tx.created_at == booked
+        assert fee_tx.completed_at == booked
 
     def test_preview_fee(self, staff, deposit_fee):
         client = APIClient()

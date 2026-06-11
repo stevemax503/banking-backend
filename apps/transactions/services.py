@@ -497,7 +497,7 @@ def _get_exchange_rate_for_preview(from_currency: str, to_currency: str) -> Deci
 
 
 from .deposit_source import DepositMethod, build_deposit_narration, normalize_deposit_source
-from .booking import apply_transaction_booking
+from .booking import apply_transaction_booking, apply_transaction_booking_with_fees
 from .narration import (
     build_deposit_system_narration,
     build_fee_system_narration,
@@ -694,6 +694,9 @@ def admin_deposit(
             account, tx, fee, initiated_by, deposit_method, source, system_narration,
         )
 
+    if transaction_at is not None:
+        apply_transaction_booking(tx, transaction_at, settled=credit_balance)
+
     if credit_balance:
         account.balance += net_amount
         account.available_balance += net_amount
@@ -702,7 +705,6 @@ def admin_deposit(
             _record_fee(account, fee, tx, initiated_by)
 
     if transaction_at is not None:
-        apply_transaction_booking(tx, transaction_at, settled=credit_balance)
         for rel in related:
             apply_transaction_booking(rel, transaction_at, settled=False)
 
@@ -878,7 +880,7 @@ def admin_account_debit(
             finalize_transaction_description(tx, system, user_memo)
 
     if transaction_at is not None:
-        apply_transaction_booking(tx, transaction_at, settled=credit_balance)
+        apply_transaction_booking_with_fees(tx, transaction_at, settled=credit_balance)
 
     return tx
 
@@ -1251,7 +1253,7 @@ def reverse_transaction(transaction_id: str, reversed_by) -> Transaction:
 
 def _record_fee(account, fee_amount, parent_tx, initiated_by):
     fee_system = build_fee_system_narration(parent_tx.reference_number)
-    parent_booked = parent_tx.completed_at or parent_tx.created_at
+    settled = parent_tx.status == Transaction.Status.COMPLETED
     fee_tx = Transaction.objects.create(
         transaction_type=Transaction.TransactionType.FEE,
         amount=fee_amount,
@@ -1261,11 +1263,12 @@ def _record_fee(account, fee_amount, parent_tx, initiated_by):
         description='Service fee',
         fee_amount=0,
         initiated_by=initiated_by,
-        created_at=parent_booked,
-        completed_at=parent_booked if parent_tx.status == Transaction.Status.COMPLETED else None,
         metadata={
             'parent_transaction_id': str(parent_tx.id),
             'fee_for_reference': parent_tx.reference_number,
         },
     )
     finalize_transaction_description(fee_tx, fee_system)
+    booked_at = parent_tx.completed_at or parent_tx.created_at
+    if booked_at:
+        apply_transaction_booking(fee_tx, booked_at, settled=settled)
