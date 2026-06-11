@@ -51,6 +51,8 @@ urlpatterns = [
     path('loans/', views.AdminLoanApplicationListView.as_view(), name='admin-loan-list'),
     path('loans/<uuid:pk>/review/', views.review_loan, name='admin-loan-review'),
     path('loans/<uuid:pk>/disburse/', views.disburse_loan_view, name='admin-loan-disburse'),
+    path('loan-application-form/pdf/', views.download_loan_application_form, name='admin-loan-application-form-pdf'),
+    path('loan-application-form/send/', views.send_loan_application_form, name='admin-loan-application-form-send'),
     path('loan-products/', views.AdminLoanProductListCreateView.as_view(), name='admin-loan-product-list'),
     path('loan-products/<uuid:pk>/', views.AdminLoanProductDetailView.as_view(), name='admin-loan-product-detail'),
 

@@ -6,6 +6,7 @@ from rest_framework import generics, parsers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 import django_filters
 
@@ -87,6 +88,12 @@ from apps.loans.models import LoanApplication, LoanProduct
 from apps.loans.serializers import LoanApplicationSerializer
 from apps.loans.admin_serializers import AdminLoanProductSerializer
 from apps.loans.services import disburse_loan
+from apps.loans.loan_application_pdf import (
+    LoanFormPrefill,
+    email_loan_application_pdf,
+    generate_loan_application_pdf,
+    prefill_from_user,
+)
 from apps.support.models import SupportTicket, TicketMessage
 from apps.support.serializers import SupportTicketSerializer, AddMessageSerializer
 from apps.audit.models import AuditLog, log_action
@@ -953,6 +960,108 @@ def disburse_loan_view(request, pk):
         return Response({'detail': 'Loan disbursed.', 'loan_account_id': str(loan_account.id)})
     except Exception as e:
         return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _loan_form_prefill_from_request(request) -> tuple[LoanFormPrefill, str | None]:
+    """Resolve optional customer prefill. Returns (prefill, user_id for audit)."""
+    user_id = request.query_params.get('user_id') or request.data.get('user_id')
+    if not user_id:
+        return LoanFormPrefill(), None
+    try:
+        user = CustomUser.objects.get(pk=user_id, role=CustomUser.Role.CUSTOMER)
+    except (CustomUser.DoesNotExist, ValueError):
+        raise ValueError('Invalid customer.')
+    assert_owner_in_scope(request.user, user.id)
+    prefill = prefill_from_user(user)
+    loan_id = request.query_params.get('loan_id') or request.data.get('loan_id')
+    if loan_id:
+        try:
+            app = LoanApplication.objects.select_related('product').get(pk=loan_id, applicant_id=user.id)
+            prefill.loan_amount = str(app.requested_amount)
+            prefill.loan_term = f'{app.term_months} months'
+            prefill.loan_purpose = app.purpose or ''
+        except LoanApplication.DoesNotExist:
+            pass
+    return prefill, str(user.id)
+
+
+@api_view(['GET'])
+@permission_classes([IsLoanOfficer])
+def download_loan_application_form(request):
+    try:
+        prefill, _ = _loan_form_prefill_from_request(request)
+    except PermissionDenied as e:
+        return Response({'detail': str(e.detail)}, status=status.HTTP_403_FORBIDDEN)
+    except ValueError as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    pdf_bytes = generate_loan_application_pdf(prefill)
+    from django.http import HttpResponse
+
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="SafaPay_Project_Loan_Application.pdf"'
+    return response
+
+
+@api_view(['POST'])
+@permission_classes([IsLoanOfficer])
+def send_loan_application_form(request):
+    email = (request.data.get('email') or '').strip()
+    user_id = request.data.get('user_id')
+
+    if email and user_id:
+        return Response(
+            {'detail': 'Provide either email or customer, not both.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    prefill = LoanFormPrefill()
+    target_user_id = None
+
+    if email:
+        to_email = email
+    elif user_id:
+        try:
+            user = CustomUser.objects.get(pk=user_id, role=CustomUser.Role.CUSTOMER)
+        except (CustomUser.DoesNotExist, ValueError):
+            return Response({'detail': 'Invalid customer.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            assert_owner_in_scope(request.user, user.id)
+        except PermissionDenied as e:
+            return Response({'detail': str(e.detail)}, status=status.HTTP_403_FORBIDDEN)
+        to_email = user.email
+        target_user_id = str(user.id)
+        prefill = prefill_from_user(user)
+        loan_id = request.data.get('loan_id')
+        if loan_id:
+            try:
+                app = LoanApplication.objects.select_related('product').get(pk=loan_id, applicant_id=user.id)
+                prefill.loan_amount = str(app.requested_amount)
+                prefill.loan_term = f'{app.term_months} months'
+                prefill.loan_purpose = app.purpose or ''
+            except LoanApplication.DoesNotExist:
+                pass
+    else:
+        return Response(
+            {'detail': 'Enter a recipient email or select a customer.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        email_loan_application_pdf(to_email, prefill)
+    except Exception as e:
+        logger.exception('Loan application PDF email failed')
+        return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    log_action(
+        actor=request.user,
+        action=AuditLog.Action.CONFIG_CHANGE,
+        target_model='CustomUser' if target_user_id else 'LoanApplicationForm',
+        target_id=target_user_id or to_email,
+        new_value={'email': to_email, 'document': 'loan_application_form'},
+        ip_address=AuditMiddleware.get_client_ip(request),
+    )
+    return Response({'detail': f'Loan application form sent to {to_email}.'})
 
 
 # ── Fee Configuration ───────────────────────────────────────────────────────────
