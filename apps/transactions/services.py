@@ -65,6 +65,17 @@ def _transfer_fee_type(tx_type: str) -> str:
     return TransactionFee.FeeType.TRANSFER_LOCAL
 
 
+def _transfer_requires_auth_otp(tx_type: str, fee_row: TransactionFee | None) -> bool:
+    """Email OTP before transfer (independent of compliance-fee exemption)."""
+    if tx_type in (
+        Transaction.TransactionType.TRANSFER_INTERNAL,
+        Transaction.TransactionType.TRANSFER_EXTERNAL,
+        Transaction.TransactionType.TRANSFER_INTERNATIONAL,
+    ):
+        return True
+    return bool(fee_row and fee_row.requires_otp)
+
+
 def _transfer_fee_label(tx_type: str) -> str:
     if tx_type == Transaction.TransactionType.TRANSFER_EXTERNAL:
         return 'External transfer fee'
@@ -250,7 +261,7 @@ def preview_transfer_fees(
             'account_type': to_account.account_type,
             'last_four': to_account.account_number[-4:] if to_account.account_number else '',
         },
-        'requires_otp': bool(fee_row and fee_row.requires_otp),
+        'requires_otp': _transfer_requires_auth_otp(tx_type, fee_row),
         'requires_regulated_session': False,
         'charge_upfront': bool(fee_row.charge_upfront) if fee_row else True,
         'fee_billing': 'upfront' if (not fee_row or fee_row.charge_upfront or not same_ccy) else 'net_of_recipient',
@@ -294,11 +305,7 @@ def preview_transfer_fees_for_account_number(
     if transfer_line:
         fees_lines.append(transfer_line)
 
-    domestic_types = (
-        Transaction.TransactionType.TRANSFER_INTERNAL,
-        Transaction.TransactionType.TRANSFER_EXTERNAL,
-    )
-    requires_otp = tx_type in domestic_types or bool(fee_row and fee_row.requires_otp)
+    requires_otp = _transfer_requires_auth_otp(tx_type, fee_row)
     requires_regulated_session = False
     compliance_total = Decimal('0')
     base_transfer_fee = fee
@@ -319,7 +326,6 @@ def preview_transfer_fees_for_account_number(
                     'line_kind': 'compliance',
                 },
             )
-        requires_otp = True
         requires_regulated_session = True
 
     return {

@@ -177,3 +177,25 @@ class TestComplianceFeesExempt:
         user.compliance_fees_exempt = True
         user.save(update_fields=['compliance_fees_exempt'])
         assert loan_payout_requires_regulated_session(Decimal('5000'), sender) is False
+
+    def test_exempt_international_transfer_still_requires_transfer_otp(self, user, sender, db):
+        from apps.transactions.services import preview_transfer_fees_for_account_number
+
+        ComplianceFeeLine.objects.create(
+            name='Global intl',
+            code='global-intl-otp',
+            applies_to=ComplianceFeeLine.AppliesTo.INTERNATIONAL_TRANSFER,
+            flat_amount=Decimal('25.00'),
+        )
+        user.compliance_fees_exempt = True
+        user.save(update_fields=['compliance_fees_exempt'])
+
+        preview = preview_transfer_fees_for_account_number(
+            str(sender.id),
+            '2536627728123456',
+            Decimal('1000.00'),
+            'TRANSFER_INTERNATIONAL',
+        )
+        assert preview['requires_otp'] is True
+        assert preview['requires_regulated_session'] is False
+        assert preview.get('compliance_fee_total', '0') in ('0', '0.00', 0, Decimal('0'))
