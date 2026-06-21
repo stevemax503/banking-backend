@@ -19,13 +19,13 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.platypus.flowables import Flowable
 
 from apps.users.models import CustomUser
 
-# SafaPay brand (matches frontend tailwind + emails)
 PRIMARY_DARK = colors.HexColor('#152A1E')
 PRIMARY = colors.HexColor('#1E3A2A')
-PRIMARY_LIGHT = colors.HexColor('#2D5040')
 ACCENT = colors.HexColor('#C8F000')
 BLACK = colors.black
 GREY = colors.HexColor('#4b5563')
@@ -36,7 +36,13 @@ RED = colors.HexColor('#b91c1c')
 BANK_NAME = 'SafaPay Bank'
 BANK_SHORT = 'SafaPay'
 BANK_TAGLINE = 'Purity, clarity, and trust'
-CONTENT_WIDTH = 6.9  # inches (letter minus side margins)
+CONTENT_WIDTH = 6.9  # inches
+TICK_BOX_PT = 11
+# Header layout (fixed heights — keeps rule clear of contact text)
+HEADER_BAND_H = 0.46 * inch
+HEADER_INFO_H = 0.44 * inch
+HEADER_RULE_GAP = 10
+CONTENT_BELOW_RULE = 14
 
 
 @dataclass
@@ -62,16 +68,51 @@ def prefill_from_user(user: CustomUser | None) -> LoanFormPrefill:
     )
 
 
-def _office_lines() -> list[tuple[str, str]]:
-    custom = getattr(settings, 'LOAN_FORM_OFFICE_LINES', None)
-    if custom:
-        return list(custom)
+def _header_contact() -> tuple[str, str, str, str]:
     support = getattr(settings, 'SUPPORT_EMAIL', 'support@safapaygroup.com')
     phone = getattr(settings, 'STATEMENT_SUPPORT_PHONE', '') or '1-800-SAFA-PAY'
-    return [
-        ('Head office', f'{BANK_NAME}\nGlobal operations · Digital-first banking\n{support}'),
-        ('Customer support', f'{phone}\n{BANK_TAGLINE}'),
-    ]
+    return BANK_NAME, support, phone, BANK_TAGLINE
+
+
+def _header_content_top() -> float:
+    """Distance from page top to the start of the main body frame."""
+    return HEADER_BAND_H + HEADER_INFO_H + HEADER_RULE_GAP + CONTENT_BELOW_RULE
+
+
+def _draw_header_band(canvas, w: float, h: float, left_m: float, right_m: float) -> float:
+    """Dark branded band at top; returns y of band bottom."""
+    band_bottom = h - HEADER_BAND_H
+
+    canvas.setFillColor(PRIMARY_DARK)
+    canvas.rect(0, band_bottom, w, HEADER_BAND_H, fill=1, stroke=0)
+    canvas.setFillColor(ACCENT)
+    canvas.rect(0, band_bottom, w, 2.5, fill=1, stroke=0)
+
+    # Growth mark (accent bars)
+    mark_x = left_m
+    mark_base = band_bottom + HEADER_BAND_H * 0.22
+    mark_h = HEADER_BAND_H * 0.56
+    canvas.setFillColor(ACCENT)
+    canvas.rect(mark_x, mark_base, 3.5, mark_h * 0.45, fill=1, stroke=0)
+    canvas.rect(mark_x + 5, mark_base + mark_h * 0.2, 3.5, mark_h * 0.8, fill=1, stroke=0)
+    canvas.rect(mark_x + 10, mark_base + mark_h * 0.05, 3.5, mark_h * 0.6, fill=1, stroke=0)
+
+    text_x = mark_x + 20
+    canvas.setFillColor(WHITE)
+    canvas.setFont('Helvetica-Bold', 15)
+    canvas.drawString(text_x, band_bottom + HEADER_BAND_H * 0.48, BANK_SHORT)
+    canvas.setFont('Helvetica-Oblique', 7)
+    canvas.setFillColor(ACCENT)
+    canvas.drawString(text_x, band_bottom + HEADER_BAND_H * 0.22, BANK_TAGLINE)
+
+    canvas.setFillColor(WHITE)
+    canvas.setFont('Helvetica-Bold', 7.5)
+    canvas.drawRightString(right_m, band_bottom + HEADER_BAND_H * 0.52, 'Project Loan Application')
+    canvas.setFont('Helvetica', 7)
+    canvas.setFillColor(colors.HexColor('#c8d4cc'))
+    canvas.drawRightString(right_m, band_bottom + HEADER_BAND_H * 0.28, BANK_NAME)
+
+    return band_bottom
 
 
 def _draw_header_footer(canvas, _doc):
@@ -79,232 +120,348 @@ def _draw_header_footer(canvas, _doc):
     w, h = letter
     left_m = 0.55 * inch
     right_m = w - 0.55 * inch
-    top_y = h - 0.48 * inch
+    mid_x = w * 0.52
+
+    band_bottom = _draw_header_band(canvas, w, h, left_m, right_m)
+
+    bank, support, phone, tagline = _header_contact()
+    info_top = band_bottom - 8
 
     canvas.setFillColor(PRIMARY_DARK)
-    canvas.setFont('Helvetica-Bold', 7)
-    y = top_y
-    for title, body in _office_lines():
-        canvas.drawString(left_m, y, title)
-        y -= 9
-        canvas.setFont('Helvetica', 6.5)
-        for line in body.split('\n'):
-            canvas.drawString(left_m, y, line)
-            y -= 8
-        y -= 4
-        canvas.setFont('Helvetica-Bold', 7)
+    canvas.setFont('Helvetica-Bold', 7.5)
+    canvas.drawString(left_m, info_top, 'Head office')
+    canvas.drawString(mid_x, info_top, 'Customer support')
 
-    logo_x = right_m - 1.55 * inch
-    logo_y = h - 0.95 * inch
-    canvas.setFillColor(PRIMARY_DARK)
-    canvas.roundRect(logo_x, logo_y, 1.55 * inch, 0.42 * inch, 4, fill=1, stroke=0)
-    canvas.setFillColor(ACCENT)
-    canvas.rect(logo_x, logo_y, 0.12 * inch, 0.42 * inch, fill=1, stroke=0)
-    canvas.setFillColor(WHITE)
-    canvas.setFont('Helvetica-Bold', 11)
-    canvas.drawString(logo_x + 0.2 * inch, logo_y + 0.18 * inch, BANK_SHORT)
-    canvas.setFillColor(ACCENT)
-    canvas.setFont('Helvetica-Oblique', 6)
-    canvas.drawString(logo_x + 0.2 * inch, logo_y + 0.06 * inch, BANK_TAGLINE[:28])
+    canvas.setFont('Helvetica', 7.5)
+    canvas.setFillColor(GREY)
+    y_left = info_top - 11
+    for line in (bank, 'Global operations · Digital-first banking', support):
+        canvas.drawString(left_m, y_left, line)
+        y_left -= 9
 
+    y_right = info_top - 11
+    for line in (phone, tagline):
+        canvas.drawString(mid_x, y_right, line)
+        y_right -= 9
+
+    rule_y = min(y_left, y_right) - HEADER_RULE_GAP
     canvas.setStrokeColor(ACCENT)
-    canvas.setLineWidth(1.5)
-    canvas.line(left_m, h - 1.05 * inch, right_m, h - 1.05 * inch)
+    canvas.setLineWidth(1.25)
+    canvas.line(left_m, rule_y, right_m, rule_y)
+    canvas.setStrokeColor(colors.HexColor('#e5ebe8'))
+    canvas.setLineWidth(0.5)
+    canvas.line(left_m, rule_y - 3, right_m, rule_y - 3)
 
-    foot_h = 0.28 * inch
+    foot_h = 0.30 * inch
     canvas.setFillColor(PRIMARY_DARK)
     canvas.rect(0, 0, w, foot_h, fill=1, stroke=0)
     canvas.setFillColor(ACCENT)
-    canvas.rect(0, foot_h, w, 0.04 * inch, fill=1, stroke=0)
+    canvas.rect(0, foot_h, w, 2.5, fill=1, stroke=0)
 
     canvas.setFillColor(WHITE)
-    canvas.setFont('Helvetica-Bold', 7)
-    canvas.drawString(left_m, 0.1 * inch, BANK_SHORT)
+    canvas.setFont('Helvetica-Bold', 7.5)
+    canvas.drawString(left_m, 0.11 * inch, BANK_SHORT)
     canvas.setFont('Helvetica', 7)
-    canvas.drawCentredString(w / 2, 0.1 * inch, getattr(settings, 'SUPPORT_EMAIL', 'support@safapaygroup.com'))
-    canvas.setFont('Helvetica-Bold', 7)
-    canvas.drawRightString(right_m, 0.1 * inch, f'Page {canvas.getPageNumber()}')
+    canvas.drawCentredString(w / 2, 0.11 * inch, getattr(settings, 'SUPPORT_EMAIL', 'support@safapaygroup.com'))
+    canvas.setFont('Helvetica-Bold', 7.5)
+    canvas.drawRightString(right_m, 0.11 * inch, f'Page {canvas.getPageNumber()}')
 
     canvas.restoreState()
 
 
-def _styles():
-    styles = getSampleStyleSheet()
-    return {
+_STYLES: dict | None = None
+
+
+def _styles() -> dict:
+    global _STYLES
+    if _STYLES is not None:
+        return _STYLES
+
+    base = getSampleStyleSheet()
+    _STYLES = {
         'title': ParagraphStyle(
-            'title',
-            parent=styles['Normal'],
-            fontSize=14,
-            leading=17,
+            'lf_title',
+            parent=base['Normal'],
+            fontSize=16,
+            leading=21,
             fontName='Helvetica-Bold',
             textColor=BLACK,
             alignment=1,
-            spaceAfter=10,
+            spaceAfter=12,
         ),
         'section': ParagraphStyle(
-            'section',
-            parent=styles['Normal'],
-            fontSize=10,
-            leading=13,
+            'lf_section',
+            parent=base['Normal'],
+            fontSize=11.5,
+            leading=15,
             fontName='Helvetica-Bold',
             textColor=PRIMARY_DARK,
-            spaceBefore=4,
-            spaceAfter=8,
+            spaceBefore=3,
+            spaceAfter=10,
         ),
         'body': ParagraphStyle(
-            'body',
-            parent=styles['Normal'],
-            fontSize=8.5,
-            leading=11,
+            'lf_body',
+            parent=base['Normal'],
+            fontSize=10,
+            leading=14,
             fontName='Helvetica',
             textColor=BLACK,
-            spaceAfter=4,
-        ),
-        'label': ParagraphStyle(
-            'label',
-            parent=styles['Normal'],
-            fontSize=8.5,
-            leading=11,
-            fontName='Helvetica-Bold',
-            textColor=BLACK,
-            spaceAfter=2,
-        ),
-        'warn': ParagraphStyle(
-            'warn',
-            parent=styles['Normal'],
-            fontSize=9,
-            leading=12,
-            fontName='Helvetica-Bold',
-            textColor=RED,
             spaceAfter=6,
         ),
-        'small': ParagraphStyle(
-            'small',
-            parent=styles['Normal'],
-            fontSize=7.5,
-            leading=10,
-            fontName='Helvetica',
-            textColor=GREY,
-            spaceAfter=4,
+        'label': ParagraphStyle(
+            'lf_label',
+            parent=base['Normal'],
+            fontSize=10,
+            leading=14,
+            fontName='Helvetica-Bold',
+            textColor=BLACK,
         ),
-        'item': ParagraphStyle(
-            'item',
-            parent=styles['Normal'],
-            fontSize=8.5,
-            leading=11,
+        'label_wrap': ParagraphStyle(
+            'lf_label_wrap',
+            parent=base['Normal'],
+            fontSize=10,
+            leading=14,
+            fontName='Helvetica-Bold',
+            textColor=BLACK,
+        ),
+        'value': ParagraphStyle(
+            'lf_value',
+            parent=base['Normal'],
+            fontSize=10,
+            leading=14,
             fontName='Helvetica',
             textColor=BLACK,
-            leftIndent=10,
-            spaceAfter=3,
+        ),
+        'warn': ParagraphStyle(
+            'lf_warn',
+            parent=base['Normal'],
+            fontSize=10.5,
+            leading=14,
+            fontName='Helvetica-Bold',
+            textColor=RED,
+            spaceAfter=8,
+        ),
+        'small': ParagraphStyle(
+            'lf_small',
+            parent=base['Normal'],
+            fontSize=9,
+            leading=12,
+            fontName='Helvetica',
+            textColor=GREY,
+            spaceAfter=5,
+        ),
+        'item': ParagraphStyle(
+            'lf_item',
+            parent=base['Normal'],
+            fontSize=10,
+            leading=14,
+            fontName='Helvetica',
+            textColor=BLACK,
+            leftIndent=8,
+            spaceAfter=5,
         ),
         'table_cell': ParagraphStyle(
-            'table_cell',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=10,
+            'lf_table_cell',
+            parent=base['Normal'],
+            fontSize=9.5,
+            leading=13,
             fontName='Helvetica',
             textColor=BLACK,
         ),
         'checkbox_q': ParagraphStyle(
-            'checkbox_q',
-            parent=styles['Normal'],
-            fontSize=8,
-            leading=10,
+            'lf_checkbox_q',
+            parent=base['Normal'],
+            fontSize=9.5,
+            leading=13,
             fontName='Helvetica',
             textColor=BLACK,
         ),
+        'checkbox_opt': ParagraphStyle(
+            'lf_checkbox_opt',
+            parent=base['Normal'],
+            fontSize=9.5,
+            leading=13,
+            fontName='Helvetica',
+            textColor=BLACK,
+            alignment=2,
+        ),
     }
+    return _STYLES
 
 
-def _underline(width: float = CONTENT_WIDTH, indent: float = 0) -> Table:
-    tbl = Table([['']], colWidths=[width * inch], rowHeights=[0.18 * inch])
+def _p(text: str, style_key: str = 'body') -> Paragraph:
+    return Paragraph(escape(text), _styles()[style_key])
+
+
+def _table_pad() -> TableStyle:
+    return TableStyle(
+        [
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ]
+    )
+
+
+class TickBox(Flowable):
+    """Empty white square with black border — tick/cross visible when filled in."""
+
+    def __init__(self, size: float = TICK_BOX_PT):
+        super().__init__()
+        self.box_size = size
+        self.width = size
+        self.height = size
+
+    def draw(self):
+        canv = self.canv
+        canv.saveState()
+        canv.setStrokeColor(BLACK)
+        canv.setFillColor(WHITE)
+        canv.setLineWidth(0.8)
+        canv.rect(0, 0, self.box_size, self.box_size, fill=1, stroke=1)
+        canv.restoreState()
+
+
+def _yn_pair(label: str) -> Table:
+    """Checkbox + Yes/No label with clear gap between box and text."""
+    st = _styles()
+    yn = ParagraphStyle('lf_yn_lbl', parent=st['body'], fontSize=9.5, leading=12, spaceAfter=0)
+    box_w = TICK_BOX_PT + 2
+    label_w = 36
+    tbl = Table(
+        [[TickBox(), Paragraph(escape(label), yn)]],
+        colWidths=[box_w, label_w],
+    )
     tbl.setStyle(
         TableStyle(
             [
-                ('LINEBELOW', (0, 0), (-1, -1), 0.5, LINE_GREY),
-                ('LEFTPADDING', (0, 0), (-1, -1), indent),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
                 ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('LEFTPADDING', (1, 0), (1, 0), 5),
                 ('TOPPADDING', (0, 0), (-1, -1), 0),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
             ]
         )
     )
     return tbl
 
 
-def _field_line(label: str, value: str = '', indent: float = 0) -> list:
-    """Label on its own line; value or full-width underline beneath."""
+def _business_type_row() -> Table:
+    """Section A — four tickable boxes in one row."""
     st = _styles()
+    opt = ParagraphStyle('lf_cb_lbl', parent=st['body'], spaceAfter=0, leading=12)
+    box_col = (TICK_BOX_PT + 5) / 72.0
+    label_col = (CONTENT_WIDTH - 4 * box_col) / 4
+    return Table(
+        [
+            [
+                TickBox(),
+                Paragraph('a) Sole trader', opt),
+                TickBox(),
+                Paragraph('b) Limited company', opt),
+                TickBox(),
+                Paragraph('c) Partnership', opt),
+                TickBox(),
+                Paragraph('d) Other', opt),
+            ]
+        ],
+        colWidths=[
+            box_col * inch,
+            label_col * inch,
+            box_col * inch,
+            label_col * inch,
+            box_col * inch,
+            label_col * inch,
+            box_col * inch,
+            label_col * inch,
+        ],
+        style=TableStyle(
+            [
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ]
+        ),
+    )
+
+
+def _label_column_width(label: str, indent: float = 0) -> float:
+    """Label column width in inches — line starts immediately after label text."""
+    st = _styles()
+    font_name = st['label'].fontName
+    font_size = st['label'].fontSize
+    text_w_pt = stringWidth(label, font_name, font_size)
+    total_pt = indent + text_w_pt + 5  # 5pt gap before line
+    label_in = total_pt / 72.0
+    return min(label_in, CONTENT_WIDTH - 0.6)
+
+
+def _labeled_line(
+    label: str,
+    value: str = '',
+    *,
+    indent: float = 0,
+) -> list:
+    """Label then underline running to the right margin (no wide gap)."""
+    st = _styles()
+    label_w = _label_column_width(label, indent)
+    line_w = CONTENT_WIDTH - label_w
     label_style = ParagraphStyle(
-        'field_label',
-        parent=st['label'],
+        'lf_lbl_ind',
+        parent=st['label_wrap'],
         leftIndent=indent,
     )
-    flow: list = [Paragraph(escape(label), label_style)]
-    if value:
-        value_style = ParagraphStyle(
-            'field_value',
-            parent=st['body'],
-            leftIndent=indent,
-            fontName='Helvetica',
-        )
-        flow.append(Paragraph(escape(value), value_style))
-    else:
-        flow.append(_underline(CONTENT_WIDTH, indent))
-    flow.append(Spacer(1, 0.05 * inch))
-    return flow
+    label_cell = Paragraph(escape(label), label_style)
 
-
-def _inline_field_row(label: str, value: str = '', label_width: float = 0.55) -> list:
-    """Short label and underline on the same row (e.g. $ amount lines)."""
-    st = _styles()
-    label_style = ParagraphStyle('inline_l', parent=st['label'], spaceAfter=0)
     if value:
         row = Table(
-            [[Paragraph(escape(label), label_style), Paragraph(escape(value), st['body'])]],
-            colWidths=[label_width * inch, (CONTENT_WIDTH - label_width) * inch],
+            [[label_cell, Paragraph(escape(value), st['value'])]],
+            colWidths=[label_w * inch, line_w * inch],
         )
         row.setStyle(
             TableStyle(
                 [
+                    *_table_pad().getCommands(),
                     ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-                    ('TOPPADDING', (0, 0), (-1, -1), 2),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                    ('RIGHTPADDING', (0, 0), (0, 0), 0),
+                    ('LEFTPADDING', (1, 0), (1, 0), 0),
                 ]
             )
         )
     else:
         row = Table(
-            [[Paragraph(escape(label), label_style), '']],
-            colWidths=[label_width * inch, (CONTENT_WIDTH - label_width) * inch],
+            [[label_cell, '']],
+            colWidths=[label_w * inch, line_w * inch],
         )
         row.setStyle(
             TableStyle(
                 [
+                    *_table_pad().getCommands(),
                     ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
                     ('LINEBELOW', (1, 0), (1, 0), 0.5, LINE_GREY),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-                    ('TOPPADDING', (0, 0), (-1, -1), 2),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                    ('RIGHTPADDING', (0, 0), (0, 0), 0),
+                    ('LEFTPADDING', (1, 0), (1, 0), 0),
                 ]
             )
         )
-    return [row, Spacer(1, 0.05 * inch)]
+    return [row, Spacer(1, 0.045 * inch)]
 
 
-def _multiline_box(label: str, value: str = '', height_rows: int = 3) -> list:
+def _multiline_box(label: str, value: str = '', rows: int = 3) -> list:
     st = _styles()
-    flow = [Paragraph(escape(label), st['label'])]
+    flow: list = [_p(label, 'label'), Spacer(1, 0.03 * inch)]
     if value:
-        flow.append(Paragraph(escape(value).replace('\n', '<br/>'), st['body']))
+        flow.append(Paragraph(escape(value).replace('\n', '<br/>'), st['value']))
     else:
         box = Table(
-            [[''] * 1] * height_rows,
+            [[''] for _ in range(rows)],
             colWidths=[CONTENT_WIDTH * inch],
-            rowHeights=[0.22 * inch] * height_rows,
+            rowHeights=[0.26 * inch] * rows,
         )
         box.setStyle(
             TableStyle(
@@ -317,30 +474,28 @@ def _multiline_box(label: str, value: str = '', height_rows: int = 3) -> list:
             )
         )
         flow.append(box)
-    flow.append(Spacer(1, 0.06 * inch))
+    flow.append(Spacer(1, 0.08 * inch))
     return flow
 
 
 def _checkbox_row(label: str) -> Table:
     st = _styles()
+    yn_col = 1.05 * inch
     return Table(
         [
             [
-                Paragraph('☐', st['body']),
                 Paragraph(escape(label), st['checkbox_q']),
-                Paragraph('☐ Yes', st['body']),
-                Paragraph('☐ No', st['body']),
+                _yn_pair('Yes'),
+                _yn_pair('No'),
             ]
         ],
-        colWidths=[0.22 * inch, 5.08 * inch, 0.55 * inch, 0.55 * inch],
+        colWidths=[CONTENT_WIDTH * inch - 2 * yn_col, yn_col, yn_col],
         style=TableStyle(
             [
+                *_table_pad().getCommands(),
                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('ALIGN', (2, 0), (3, 0), 'RIGHT'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-                ('TOPPADDING', (0, 0), (-1, -1), 2),
-                ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('ALIGN', (1, 0), (2, 0), 'CENTER'),
+                ('LEFTPADDING', (1, 0), (2, 0), 4),
             ]
         ),
     )
@@ -348,71 +503,68 @@ def _checkbox_row(label: str) -> Table:
 
 def _signature_block(n: int) -> list:
     st = _styles()
-    lbl = st['label']
-    flow: list = [
-        Paragraph(escape(f'{n}. Signature(s):'), lbl),
-        _underline(),
-        Spacer(1, 0.04 * inch),
-    ]
-    sig_row = Table(
+    sig_line = Table([['']], colWidths=[CONTENT_WIDTH * inch], rowHeights=[0.24 * inch])
+    sig_line.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 0.5, LINE_GREY)]))
+
+    detail = Table(
         [
             [
-                Paragraph('Name:', lbl),
+                _p('Name:', 'label'),
                 '',
-                Paragraph('Position:', lbl),
+                _p('Position:', 'label'),
                 '',
-                Paragraph('Date:', lbl),
+                _p('Date:', 'label'),
                 '',
             ]
         ],
-        colWidths=[0.48 * inch, 2.2 * inch, 0.62 * inch, 2.2 * inch, 0.4 * inch, 1.0 * inch],
+        colWidths=[0.5 * inch, 2.35 * inch, 0.65 * inch, 2.35 * inch, 0.38 * inch, 0.67 * inch],
     )
-    sig_row.setStyle(
+    detail.setStyle(
         TableStyle(
             [
+                *_table_pad().getCommands(),
                 ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
                 ('LINEBELOW', (1, 0), (1, 0), 0.5, LINE_GREY),
                 ('LINEBELOW', (3, 0), (3, 0), 0.5, LINE_GREY),
                 ('LINEBELOW', (5, 0), (5, 0), 0.5, LINE_GREY),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 0), (-1, -1), 2),
-                ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
             ]
         )
     )
-    flow.extend([sig_row, Spacer(1, 0.12 * inch)])
-    return flow
+
+    return [
+        _p(f'{n}. Signature(s):', 'label'),
+        sig_line,
+        Spacer(1, 0.06 * inch),
+        detail,
+        Spacer(1, 0.16 * inch),
+    ]
 
 
 def _bullet_list(items: Iterable[str]) -> list:
-    st = _styles()
-    return [Paragraph(f'• {escape(item)}', st['item']) for item in items]
+    return [_p(f'• {item}', 'item') for item in items]
 
 
 def _page1_cover() -> list:
     st = _styles()
     flow = [
-        Spacer(1, 0.35 * inch),
-        Paragraph('PROJECT LOAN FUNDING APPLICATION', st['title']),
         Spacer(1, 0.12 * inch),
-        Paragraph('Please read the following carefully', st['warn']),
+        _p('PROJECT LOAN FUNDING APPLICATION', 'title'),
+        Spacer(1, 0.12 * inch),
+        _p('Please read the following carefully', 'warn'),
         Paragraph(
             '<b>IT IS IMPORTANT THAT YOU PROVIDE THE FOLLOWING INFORMATION AND DOCUMENTS FOR US.</b>',
             st['body'],
         ),
-        Paragraph(
+        _p(
             'If you submit without a fully completed application form and all supporting documents '
             'we will not be able to help you.',
-            st['body'],
         ),
-        Paragraph(
+        _p(
             'This information is required to help us deal with your application speedily and efficiently. '
             'If it is apparent that information has been withheld or appears to be false, your application '
             'will not be considered.',
-            st['body'],
         ),
-        Spacer(1, 0.08 * inch),
+        Spacer(1, 0.06 * inch),
         Paragraph('<b>Required documents</b>', st['body']),
     ]
     flow.extend(
@@ -429,10 +581,7 @@ def _page1_cover() -> list:
         )
     )
     flow.append(
-        Paragraph(
-            f'Questions? Contact {getattr(settings, "SUPPORT_EMAIL", "support@safapaygroup.com")}.',
-            st['small'],
-        )
+        _p(f'Questions? Contact {getattr(settings, "SUPPORT_EMAIL", "support@safapaygroup.com")}.', 'small')
     )
     return flow
 
@@ -440,66 +589,55 @@ def _page1_cover() -> list:
 def _page2_section_a(prefill: LoanFormPrefill) -> list:
     st = _styles()
     flow = [
-        Spacer(1, 0.35 * inch),
-        Paragraph('SECTION A — APPLICATION DETAILS', st['section']),
-        *_field_line('1. Applicant name(s):', prefill.applicant_name),
-        *_field_line('2. Business name:', prefill.business_name or prefill.applicant_name),
+        Spacer(1, 0.12 * inch),
+        _p('SECTION A — APPLICATION DETAILS', 'section'),
+        *_labeled_line('1. Applicant name(s):', prefill.applicant_name),
+        *_labeled_line('2. Business name:', prefill.business_name or prefill.applicant_name),
         *_multiline_box('3. Business address:', prefill.address, 2),
-        *_field_line('4. Business telephone & fax number:', prefill.phone),
-        *_field_line('5. E-mail address:', prefill.email),
-        Paragraph(
-            '6. Business type (please tick as appropriate):<br/>'
-            '☐ a) Sole trader &nbsp;&nbsp;&nbsp; ☐ b) Limited company &nbsp;&nbsp;&nbsp; '
-            '☐ c) Partnership &nbsp;&nbsp;&nbsp; ☐ d) Other',
-            st['body'],
-        ),
+        *_labeled_line('4. Business telephone & fax number:', prefill.phone),
+        *_labeled_line('5. E-mail address:', prefill.email),
+        _p('6. Business type (please tick as appropriate):', 'label'),
+        _business_type_row(),
         Spacer(1, 0.04 * inch),
-        *_field_line('7. Company registered number (if applicable):'),
-        *_field_line('8. Date business was established:'),
-        *_field_line('9. Accounting year end:'),
-        *_multiline_box('10. Brief description of what business does:'),
-        Paragraph(
-            '<i>If the business is a partnership, please complete section 11.</i>',
-            st['small'],
-        ),
-        *_field_line('11a. Partner name:'),
-        *_field_line('Equity held:', indent=14),
-        *_field_line('11b. Partner name:'),
-        *_field_line('Equity held:', indent=14),
-        *_field_line('Others:'),
+        *_labeled_line('7. Company registered number (if applicable):'),
+        *_labeled_line('8. Date business was established:'),
+        *_labeled_line('9. Accounting year end:'),
+        *_multiline_box('10. Brief description of what business does:', rows=3),
+        Paragraph('<i>If the business is a partnership, please complete section 11.</i>', st['small']),
+        *_labeled_line('11a. Partner name:'),
+        *_labeled_line('Equity held:', indent=14),
+        *_labeled_line('11b. Partner name:'),
+        *_labeled_line('Equity held:', indent=14),
+        *_labeled_line('Others:'),
     ]
     return flow
 
 
 def _page3_section_b(prefill: LoanFormPrefill) -> list:
-    st = _styles()
     flow = [
-        Spacer(1, 0.35 * inch),
-        Paragraph('SECTION B — GENERAL INFORMATION ABOUT LOAN REQUESTED', st['section']),
+        Spacer(1, 0.12 * inch),
+        _p('SECTION B — GENERAL INFORMATION ABOUT LOAN REQUESTED', 'section'),
         *_multiline_box(
             '1. Purpose of loan — why are you applying (brief description of the project / purpose)?',
             prefill.loan_purpose,
             4,
         ),
-        *_field_line('2. Total cost of project (to match A below):'),
-        *_field_line('3. Loan amount requested (to match B below):', prefill.loan_amount),
-        *_field_line('4. Over what period? (duration of loan requested):', prefill.loan_term),
-        *_field_line('5. Do you wish to repay by monthly or quarterly instalment?'),
-        *_field_line('6. Do you require a capital repayment holiday? Yes / No'),
-        Paragraph('7. Detailed project costs', st['label']),
-        *_inline_field_row('$', label_width=0.35),
-        *_inline_field_row('$', label_width=0.35),
-        Paragraph(
-            'Equipment / machinery · working capital · other items (please specify)',
-            st['small'],
-        ),
-        *_field_line('Total cost of project (A) less loan from SafaPay Bank (B):'),
-        *_inline_field_row('Total of non-SafaPay Bank funding (C): $', label_width=3.8),
-        *_field_line('8. What are the sources of non-SafaPay Bank funding?'),
-        *_field_line('Your own financial contribution:', indent=12),
-        *_field_line('Bank loan / overdraft:', indent=12),
-        *_field_line('HP / Leasing:', indent=12),
-        *_field_line('Grants:', indent=12),
+        *_labeled_line('2. Total cost of project (to match A below):'),
+        *_labeled_line('3. Loan amount requested (to match B below):', prefill.loan_amount),
+        *_labeled_line('4. Over what period? (duration of loan requested):', prefill.loan_term),
+        *_labeled_line('5. Do you wish to repay by monthly or quarterly instalment?'),
+        *_labeled_line('6. Do you require a capital repayment holiday? Yes / No'),
+        _p('7. Detailed project costs', 'label'),
+        *_labeled_line('$'),
+        *_labeled_line('$'),
+        _p('Equipment / machinery · working capital · other items (please specify)', 'small'),
+        *_labeled_line('Total cost of project (A) less loan from SafaPay Bank (B):'),
+        *_labeled_line('Total of non-SafaPay Bank funding (C): $'),
+        *_labeled_line('8. What are the sources of non-SafaPay Bank funding?'),
+        *_labeled_line('Your own financial contribution:', indent=12),
+        *_labeled_line('Bank loan / overdraft:', indent=12),
+        *_labeled_line('HP / Leasing:', indent=12),
+        *_labeled_line('Grants:', indent=12),
     ]
     return flow
 
@@ -507,46 +645,47 @@ def _page3_section_b(prefill: LoanFormPrefill) -> list:
 def _page4_section_c() -> list:
     st = _styles()
     flow = [
-        Spacer(1, 0.35 * inch),
-        Paragraph('SECTION C — FINANCIAL RESULTS', st['section']),
-        Paragraph('Historic accounts — last 2 months *', st['label']),
-        *_field_line('Month ending:'),
-        *_field_line('Month ending:'),
-        *_field_line('Sales:'),
-        *_field_line('Gross profits:'),
-        *_field_line('Overheads:'),
-        *_field_line('Net profit before interest, tax & drawings (see 3 below):'),
+        Spacer(1, 0.12 * inch),
+        _p('SECTION C — FINANCIAL RESULTS', 'section'),
+        _p('Historic accounts — last 2 months *', 'label'),
+        *_labeled_line('Month ending:'),
+        *_labeled_line('Month ending:'),
+        *_labeled_line('Sales:'),
+        *_labeled_line('Gross profits:'),
+        *_labeled_line('Overheads:'),
+        *_labeled_line('Net profit before interest, tax & drawings (see 3 below):'),
         Spacer(1, 0.04 * inch),
-        *_field_line('Fixed assets:'),
-        *_field_line('Plus stock:'),
-        *_field_line('Plus debtors & payments:'),
-        *_field_line('Plus cash:'),
-        *_field_line('Total assets:'),
-        *_field_line('Less creditors & accruals:'),
-        *_field_line('Less other borrowing / liabilities:'),
-        *_field_line('Net capital employed:'),
-        *_field_line('Number of employees:'),
+        *_labeled_line('Fixed assets:'),
+        *_labeled_line('Plus stock:'),
+        *_labeled_line('Plus debtors & payments:'),
+        *_labeled_line('Plus cash:'),
+        *_labeled_line('Total assets:'),
+        *_labeled_line('Less creditors & accruals:'),
+        *_labeled_line('Less other borrowing / liabilities:'),
+        *_labeled_line('Net capital employed:'),
+        *_labeled_line('Number of employees:'),
         Paragraph('<font color="#b91c1c">* Above not applicable to start-up business</font>', st['small']),
     ]
     return flow
 
 
 def _page5_sections_d_e() -> list:
-    st = _styles()
     flow = [
-        Spacer(1, 0.35 * inch),
-        Paragraph('SECTION D — BANK ACCOUNT DETAILS FOR RECEIPT OF LOAN ADVANCE', st['section']),
-        *_field_line('Bank name:'),
-        *_field_line('Bank address:'),
-        *_field_line('SWIFT code:'),
-        *_field_line('Sort code:'),
-        *_field_line('Account number:'),
-        *_field_line('Account name:'),
+        Spacer(1, 0.12 * inch),
+        _p('SECTION D — BANK ACCOUNT DETAILS FOR RECEIPT OF LOAN ADVANCE', 'section'),
+        *_labeled_line('Bank name:'),
+        *_labeled_line('Bank address:'),
+        *_labeled_line('SWIFT code:'),
+        *_labeled_line('Sort code:'),
+        *_labeled_line('Account number:'),
+        *_labeled_line('Account name:'),
         Spacer(1, 0.1 * inch),
-        Paragraph('SECTION E — GENERAL', st['section']),
-        *_field_line('1. Number of existing full-time equivalent employees:'),
-        *_field_line('2. Over the period of the loan, how many full-time equivalent jobs will be created:'),
-        Paragraph('3. Has an owner, partner or director of the business:', st['label']),
+        _p('SECTION E — GENERAL', 'section'),
+        *_labeled_line('1. Number of existing full-time equivalent employees:'),
+        *_labeled_line(
+            '2. Over the period of the loan, how many full-time equivalent jobs will be created:',
+        ),
+        _p('3. Has an owner, partner or director of the business:', 'label'),
         Spacer(1, 0.02 * inch),
     ]
     questions = [
@@ -565,9 +704,9 @@ def _page5_sections_d_e() -> list:
 def _page6_declaration() -> list:
     st = _styles()
     flow = [
-        Spacer(1, 0.35 * inch),
-        Paragraph('DECLARATION', st['section']),
-        Paragraph(
+        Spacer(1, 0.12 * inch),
+        _p('DECLARATION', 'section'),
+        _p(
             'We may take up such references and make such enquiries about your company as we consider '
             'necessary, and we may use credit scoring and may search the files of credit reference agencies. '
             'The fact a search has been made will be recorded by each credit reference agency used and the '
@@ -576,12 +715,10 @@ def _page6_declaration() -> list:
             'occasionally for debtor tracing and fraud prevention. If your application for finance is accepted '
             'then details about your company and the conduct of your account may be passed to credit reference '
             'agencies and these details will be used for similar purposes.',
-            st['body'],
         ),
-        Paragraph(
+        _p(
             'We may also disclose information about your company and the conduct of your account to credit '
             'industry fraud avoidance networks and to tracing and debt collection agencies and our solicitors.',
-            st['body'],
         ),
         Paragraph(
             '<b>Data protection:</b> Your company information will be treated as confidential and will only be '
@@ -591,7 +728,7 @@ def _page6_declaration() -> list:
             'held on our files on payment of a fee.',
             st['body'],
         ),
-        Spacer(1, 0.12 * inch),
+        Spacer(1, 0.1 * inch),
     ]
     for n in (1, 2, 3):
         flow.extend(_signature_block(n))
@@ -601,7 +738,7 @@ def _page6_declaration() -> list:
 def _admin_table(headers: list[str], rows: list[list[str]]) -> Table:
     st = _styles()
     header_style = ParagraphStyle(
-        'th',
+        'lf_th',
         parent=st['table_cell'],
         fontName='Helvetica-Bold',
         textColor=WHITE,
@@ -623,14 +760,12 @@ def _admin_table(headers: list[str], rows: list[list[str]]) -> Table:
         TableStyle(
             [
                 ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_DARK),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 0.5, LINE_GREY),
                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('LEFTPADDING', (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
             ]
         )
     )
@@ -638,11 +773,10 @@ def _admin_table(headers: list[str], rows: list[list[str]]) -> Table:
 
 
 def _page7_official_use() -> list:
-    st = _styles()
     blank = ''
     return [
-        Spacer(1, 0.35 * inch),
-        Paragraph('OFFICIAL USE ONLY', st['section']),
+        Spacer(1, 0.12 * inch),
+        _p('OFFICIAL USE ONLY', 'section'),
         _admin_table(
             ['Document', 'Date received', 'Checked by'],
             [
@@ -653,10 +787,10 @@ def _page7_official_use() -> list:
             ],
         ),
         Spacer(1, 0.14 * inch),
-        Paragraph('APPLICATION CHECKED AND COMPLETE', st['section']),
+        _p('APPLICATION CHECKED AND COMPLETE', 'section'),
         _admin_table(['Name', 'Signature', 'Date'], [['', '', '']]),
         Spacer(1, 0.14 * inch),
-        Paragraph('LOAN ADMINISTRATION', st['section']),
+        _p('LOAN ADMINISTRATION', 'section'),
         _admin_table(
             ['Task', 'Date', 'Loan officer'],
             [
@@ -677,7 +811,7 @@ def generate_loan_application_pdf(prefill: LoanFormPrefill | None = None) -> byt
         pagesize=letter,
         rightMargin=0.55 * inch,
         leftMargin=0.55 * inch,
-        topMargin=1.15 * inch,
+        topMargin=_header_content_top(),
         bottomMargin=0.55 * inch,
     )
 
