@@ -1,10 +1,14 @@
 from .base import *
+import os
 
 DEBUG = False
 
 MIDDLEWARE = list(MIDDLEWARE)
 MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
+# Set COLLECTSTATIC_LIGHT=1 during deploy on small VPS to avoid OOM during compression.
+if os.environ.get('COLLECTSTATIC_LIGHT') == '1':
+    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 WHITENOISE_USE_FINDERS = True
 
 SECURE_SSL_REDIRECT = True

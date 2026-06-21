@@ -5,19 +5,27 @@ set -euo pipefail
 #
 # What it does:
 # - Pull latest code from GitHub
-# - Install Python deps (requirements.txt) into the existing venv
-# - Run makemigrations + migrate
+# - Install Python deps into the existing venv
+# - Stop gunicorn/celery (frees RAM for migrate + collectstatic)
+# - Run migrate (does NOT run makemigrations — commit migrations in git)
 # - Collect static files
-# - Restart gunicorn + celery + celery beat
+# - Restart gunicorn + celery + celery beat (always, even if a step failed)
 #
-# Assumptions:
-# - Repo lives at /opt/banking-backend
-# - Virtualenv lives at /opt/banking-backend/.venv
-# - systemd units are already installed/enabled:
-#   banking-backend-gunicorn, banking-backend-celery, banking-backend-celery-beat
+# Env overrides:
+#   REPO_DIR, VENV_DIR, PYTHON_BIN, PIP_BIN, REQ_FILE
+#   COLLECTSTATIC_LIGHT=1  — skip WhiteNoise gzip pass (default: 1, safer on small VPS)
+#   SKIP_COLLECTSTATIC=1   — skip collectstatic entirely
+#   SKIP_SERVICE_RESTART=1 — do not stop/restart systemd units
 
 REPO_DIR="${REPO_DIR:-/opt/banking-backend}"
 VENV_DIR="${VENV_DIR:-}"
+COLLECTSTATIC_LIGHT="${COLLECTSTATIC_LIGHT:-1}"
+SKIP_COLLECTSTATIC="${SKIP_COLLECTSTATIC:-0}"
+SKIP_SERVICE_RESTART="${SKIP_SERVICE_RESTART:-0}"
+
+GUNICORN_UNIT="${GUNICORN_UNIT:-banking-backend-gunicorn}"
+CELERY_UNIT="${CELERY_UNIT:-banking-backend-celery}"
+CELERY_BEAT_UNIT="${CELERY_BEAT_UNIT:-banking-backend-celery-beat}"
 
 if [[ -z "${VENV_DIR}" ]]; then
   if [[ -x "${REPO_DIR}/.venv/bin/python" ]]; then
@@ -26,6 +34,41 @@ if [[ -z "${VENV_DIR}" ]]; then
     VENV_DIR="${REPO_DIR}/venv"
   fi
 fi
+
+SERVICES_STOPPED=0
+
+stop_app_services() {
+  if [[ "${SKIP_SERVICE_RESTART}" == "1" ]]; then
+    return 0
+  fi
+  echo "==> Stop app services (free memory for migrate/collectstatic)"
+  sudo systemctl stop "${GUNICORN_UNIT}" "${CELERY_UNIT}" "${CELERY_BEAT_UNIT}" 2>/dev/null || true
+  SERVICES_STOPPED=1
+  sleep 2
+}
+
+restart_app_services() {
+  if [[ "${SKIP_SERVICE_RESTART}" == "1" || "${SERVICES_STOPPED}" -eq 0 ]]; then
+    return 0
+  fi
+  echo "==> Restart services"
+  sudo systemctl restart "${GUNICORN_UNIT}" "${CELERY_UNIT}" "${CELERY_BEAT_UNIT}"
+  echo "==> Status"
+  sudo systemctl --no-pager status "${GUNICORN_UNIT}" "${CELERY_UNIT}" "${CELERY_BEAT_UNIT}" | sed -n '1,60p' || true
+}
+
+on_exit() {
+  local code=$?
+  restart_app_services || true
+  if [[ "${code}" -ne 0 ]]; then
+    echo "" >&2
+    echo "Deploy failed (exit ${code})." >&2
+    echo "If collectstatic was Killed, the VPS ran out of RAM — add swap or use COLLECTSTATIC_LIGHT=1 (default)." >&2
+    exit "${code}"
+  fi
+}
+
+trap on_exit EXIT
 
 echo "==> Deploy starting"
 
@@ -45,7 +88,6 @@ git fetch --all --prune
 git checkout main
 git pull --ff-only origin main
 
-# Resolve requirements after pull (paths may not exist until latest code is on disk).
 if [[ -z "${REQ_FILE}" ]]; then
   if [[ -e "${REPO_DIR}/requirements/prod.txt" ]]; then
     REQ_FILE="${REPO_DIR}/requirements/prod.txt"
@@ -62,11 +104,6 @@ fi
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   echo "ERROR: Python venv not found/executable: ${PYTHON_BIN}" >&2
-  echo "Expected one of:" >&2
-  echo "  - ${REPO_DIR}/.venv/bin/python" >&2
-  echo "  - ${REPO_DIR}/venv/bin/python" >&2
-  echo "" >&2
-  echo "Create it first (example): python3 -m venv ${REPO_DIR}/venv" >&2
   exit 1
 fi
 
@@ -74,29 +111,26 @@ echo "==> Install backend dependencies"
 "${PIP_BIN}" install --upgrade pip
 if [[ -z "${REQ_FILE}" || ! -f "${REQ_FILE}" ]]; then
   echo "ERROR: requirements file not found." >&2
-  echo "Expected one of:" >&2
-  echo "  - ${REPO_DIR}/requirements/prod.txt" >&2
-  echo "  - ${REPO_DIR}/requirements.txt" >&2
-  echo "  - ${REPO_DIR}/requirements/base.txt" >&2
-  echo "  - ${REPO_DIR}/requirements/requirements.txt" >&2
   exit 1
 fi
 "${PIP_BIN}" install -r "${REQ_FILE}"
 
+stop_app_services
+
 echo "==> Django migrations"
-"${PYTHON_BIN}" manage.py makemigrations
-"${PYTHON_BIN}" manage.py migrate
+"${PYTHON_BIN}" manage.py migrate --noinput
 
-echo "==> Collect static"
-"${PYTHON_BIN}" manage.py collectstatic --noinput
+if [[ "${SKIP_COLLECTSTATIC}" == "1" ]]; then
+  echo "==> Collect static (skipped — SKIP_COLLECTSTATIC=1)"
+else
+  echo "==> Collect static (COLLECTSTATIC_LIGHT=${COLLECTSTATIC_LIGHT})"
+  if ! COLLECTSTATIC_LIGHT="${COLLECTSTATIC_LIGHT}" "${PYTHON_BIN}" manage.py collectstatic --noinput; then
+    echo "WARN: collectstatic failed; retrying with COLLECTSTATIC_LIGHT=1..." >&2
+    COLLECTSTATIC_LIGHT=1 "${PYTHON_BIN}" manage.py collectstatic --noinput
+  fi
+fi
 
-echo "==> Restart services"
-sudo systemctl restart banking-backend-gunicorn
-sudo systemctl restart banking-backend-celery
-sudo systemctl restart banking-backend-celery-beat
-
-echo "==> Status"
-sudo systemctl --no-pager status banking-backend-gunicorn banking-backend-celery banking-backend-celery-beat | sed -n '1,60p'
+trap - EXIT
+restart_app_services
 
 echo "==> Deploy complete"
-
