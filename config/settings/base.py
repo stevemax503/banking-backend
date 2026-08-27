@@ -206,6 +206,8 @@ _cors_origins = [
 ]
 CORS_ALLOWED_ORIGINS = list(dict.fromkeys(_cors_origins)) or ['http://localhost:5173']
 CORS_ALLOW_CREDENTIALS = True
+# Public SPA origin for links in emails (password reset, etc.). First CORS origin.
+FRONTEND_URL = str(CORS_ALLOWED_ORIGINS[0]).rstrip('/')
 
 # Channels
 CHANNEL_LAYERS = {

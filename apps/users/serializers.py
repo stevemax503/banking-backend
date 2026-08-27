@@ -100,6 +100,17 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         return attrs
 
 
+class AdminSetPasswordSerializer(serializers.Serializer):
+    new_password = serializers.CharField(validators=[validate_password])
+    new_password_confirm = serializers.CharField()
+    send_email = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError({'new_password': 'Passwords do not match.'})
+        return attrs
+
+
 class MFAEnrollSerializer(serializers.Serializer):
     mfa_type = serializers.ChoiceField(choices=['totp', 'email'])
 

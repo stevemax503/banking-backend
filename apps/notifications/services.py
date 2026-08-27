@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 EMAIL_ONLY_EVENT_TYPES = frozenset({
     'mfa_otp',
     'password_reset',
+    'admin_password_set',
     'registration',
     'low_balance',
     'loan_payment_due',

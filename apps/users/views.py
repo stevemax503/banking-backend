@@ -1,8 +1,5 @@
 import logging
-import secrets
 import pyotp
-from datetime import timedelta
-from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework import status, generics
 from rest_framework.exceptions import PermissionDenied
@@ -292,17 +289,9 @@ def password_reset_request(request):
     email = serializer.validated_data['email']
     try:
         user = User.objects.get(email=email, is_active=True)
-        token_str = secrets.token_urlsafe(48)
-        PasswordResetToken.objects.create(
-            user=user,
-            token=token_str,
-            expires_at=timezone.now() + timedelta(hours=1),
-        )
-        send_email_notification.delay(
-            user_id=str(user.id),
-            event_type='password_reset',
-            context={'token': token_str, 'full_name': user.full_name},
-        )
+        from .password_reset import issue_password_reset_email
+
+        issue_password_reset_email(user)
     except User.DoesNotExist:
         pass
     return Response({'detail': 'If this email exists, a reset link has been sent.'})

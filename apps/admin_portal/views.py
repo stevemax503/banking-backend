@@ -432,6 +432,78 @@ def admin_issue_login_otp(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+def admin_set_user_password(request, pk):
+    from apps.users.serializers import AdminSetPasswordSerializer
+
+    try:
+        user = CustomUser.objects.get(id=pk)
+    except CustomUser.DoesNotExist:
+        return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    assert_owner_in_scope(request.user, user.id)
+
+    serializer = AdminSetPasswordSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    new_password = serializer.validated_data['new_password']
+    send_email = bool(serializer.validated_data.get('send_email'))
+
+    user.set_password(new_password)
+    user.save(update_fields=['password'])
+
+    if send_email:
+        send_email_notification.delay(
+            str(user.id),
+            'admin_password_set',
+            context={
+                'full_name': user.full_name,
+                'new_password': new_password,
+            },
+        )
+
+    log_action(
+        actor=request.user,
+        action=AuditLog.Action.UPDATE,
+        target_model='CustomUser',
+        target_id=user.id,
+        description='Staff set account password.',
+        new_value={'email_queued': send_email},
+        ip_address=AuditMiddleware.get_client_ip(request),
+    )
+    return Response({
+        'detail': 'Password updated.',
+        'email_queued': send_email,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def admin_send_password_reset(request, pk):
+    from apps.users.password_reset import issue_password_reset_email
+
+    try:
+        user = CustomUser.objects.get(id=pk)
+    except CustomUser.DoesNotExist:
+        return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    assert_owner_in_scope(request.user, user.id)
+
+    if not user.is_active:
+        return Response({'detail': 'Cannot send a reset link to an inactive account.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    issue_password_reset_email(user)
+    log_action(
+        actor=request.user,
+        action=AuditLog.Action.UPDATE,
+        target_model='CustomUser',
+        target_id=user.id,
+        description='Staff sent password reset link.',
+        ip_address=AuditMiddleware.get_client_ip(request),
+    )
+    return Response({'detail': 'Password reset link sent to the user email.'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
 def admin_impersonate_customer(request, pk):
     """Issue customer JWT so an admin can view the retail dashboard (desk support)."""
     from rest_framework_simplejwt.tokens import RefreshToken

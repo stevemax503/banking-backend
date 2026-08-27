@@ -75,3 +75,42 @@ class EmailSenderRoutingTests(TestCase):
         self.assertEqual(resolve_sender_key('loan_approved', {}), 'info')
         self.assertEqual(resolve_contact_key('registration', {}), 'support')
         self.assertEqual(resolve_contact_key('transaction', {'direction': 'credit'}), 'support')
+
+    @override_settings(FRONTEND_URL='http://localhost:5173')
+    def test_password_reset_email_uses_frontend_link(self):
+        from types import SimpleNamespace
+
+        token = 'abc_reset_token_xyz'
+        _, text_body, html_body = render_event_email(
+            'password_reset',
+            {
+                'token': token,
+                'full_name': 'Alex',
+                'user': SimpleNamespace(full_name='Alex'),
+            },
+        )
+        expected = f'http://localhost:5173/auth/reset-password?token={token}'
+        self.assertIn(expected, text_body)
+        self.assertIn(expected, html_body)
+        self.assertIn(f'href="{expected}"', html_body)
+        self.assertNotIn(f'href="{token}"', html_body)
+
+    @override_settings(FRONTEND_URL='https://www.safapaygroup.com')
+    def test_password_reset_email_uses_production_frontend(self):
+        token = 'prod-token-1'
+        _, text_body, html_body = render_event_email(
+            'password_reset',
+            {'token': token, 'full_name': 'Alex'},
+        )
+        expected = f'https://www.safapaygroup.com/auth/reset-password?token={token}'
+        self.assertIn(expected, text_body)
+        self.assertIn(f'href="{expected}"', html_body)
+
+    @override_settings(FRONTEND_URL='http://localhost:5173')
+    def test_admin_password_set_email_includes_password(self):
+        _, text_body, html_body = render_event_email(
+            'admin_password_set',
+            {'new_password': 'TempPass123!', 'full_name': 'Alex'},
+        )
+        self.assertIn('TempPass123!', text_body)
+        self.assertIn('TempPass123!', html_body)

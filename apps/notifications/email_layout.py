@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.template import TemplateDoesNotExist
@@ -15,6 +16,26 @@ from .email_assets import logo_image_src, public_assets_base
 
 BANK_NAME = 'SafaPay Bank'
 BANK_TAGLINE = 'Purity, clarity, and trust'
+PASSWORD_RESET_PATH = '/auth/reset-password'
+
+
+def frontend_origin() -> str:
+    origin = (getattr(settings, 'FRONTEND_URL', '') or '').strip().rstrip('/')
+    if origin:
+        return origin
+    origins = getattr(settings, 'CORS_ALLOWED_ORIGINS', None) or []
+    if isinstance(origins, str):
+        origins = [origins]
+    for item in origins:
+        item = str(item).strip().rstrip('/')
+        if item:
+            return item
+    return 'http://localhost:5173'
+
+
+def password_reset_link(token: str) -> str:
+    return f'{frontend_origin()}{PASSWORD_RESET_PATH}?{urlencode({"token": token})}'
+
 
 SENDER_DISPLAY_NAMES = {
     'info': 'SafaPay Bank',
@@ -40,6 +61,7 @@ EVENT_SENDER_KEYS: dict[str, str | None] = {
     'mfa_otp': 'security',
     'compliance_fee_otp': 'security',
     'password_reset': 'security',
+    'admin_password_set': 'security',
     'security_alert': 'security',
     'profile_update_approved': 'admin',
 }
@@ -120,6 +142,7 @@ def get_from_email() -> str:
 EMAIL_SUBJECTS = {
     'registration': 'Welcome to SafaPay Bank — Your account is ready',
     'password_reset': 'Reset your SafaPay password',
+    'admin_password_set': 'Your SafaPay password was updated',
     'mfa_otp': 'Your SafaPay verification code',
     'compliance_fee_otp': 'Your compliance verification code',
     'compliance_payment_confirmed': 'Compliance payment confirmed',
@@ -155,7 +178,7 @@ def fallback_body(event_type: str, context: dict) -> str:
             "You will receive a verification code by email when it is ready."
         )
     if event_type == 'password_reset':
-        return f"Click the link to reset your password: {context.get('token')}"
+        return f"Click the link to reset your password: {context.get('reset_url') or context.get('token')}"
     if event_type == 'transaction':
         return (
             f"Transaction alert: {context.get('tx_type')} of "
@@ -286,11 +309,15 @@ def render_event_email(event_type: str, context: dict) -> tuple[str, str, str]:
             ctx['otp_validity_label'] = f'{validity_sec} seconds'
     if event_type == 'compliance_fee_otp':
         ctx.setdefault('valid_hours', 48)
+    if event_type == 'password_reset':
+        token = str(ctx.get('token') or '')
+        if token:
+            ctx['reset_url'] = password_reset_link(token)
 
     try:
         inner_text = render_to_string(f'emails/{event_type}.txt', ctx)
     except TemplateDoesNotExist:
-        inner_text = fallback_body(event_type, context)
+        inner_text = fallback_body(event_type, ctx)
 
     text_body = wrap_text_body(inner_text, ctx)
 
