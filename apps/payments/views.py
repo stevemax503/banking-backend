@@ -1,6 +1,6 @@
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from apps.accounts.models import Account
@@ -24,7 +24,7 @@ from .services import resolve_management_fee
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def resolve_management_fee_view(request):
     service_id = (request.query_params.get('service_id') or '').strip()
     biller_id = (request.query_params.get('biller_id') or '').strip()
@@ -49,7 +49,7 @@ def resolve_management_fee_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def bill_pay_view(request):
     serializer = BillPaySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)

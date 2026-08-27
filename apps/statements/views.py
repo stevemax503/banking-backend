@@ -2,7 +2,7 @@ import mimetypes
 from django.http import FileResponse, Http404
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from .models import Statement
@@ -12,7 +12,7 @@ from .tasks import generate_statement_task
 
 class StatementListView(generics.ListAPIView):
     serializer_class = StatementSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return Statement.objects.filter(
@@ -26,7 +26,7 @@ class StatementListView(generics.ListAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def request_statement(request):
     serializer = StatementRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -54,7 +54,7 @@ def request_statement(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def download_statement(request, pk):
     try:
         statement = Statement.objects.get(id=pk, account__owner=request.user)

@@ -4,7 +4,7 @@ from django.db.models import Prefetch, Sum
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from apps.accounts.models import Account
@@ -49,7 +49,7 @@ def _month_debit_total(account_id) -> Decimal:
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def card_summary(request):
     """Accounts with optional card issuance + month-to-date debit total (for limit bar)."""
     accounts = (
@@ -80,7 +80,7 @@ def card_summary(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def request_card(request):
     account_id = request.data.get('account_id')
     if not account_id:
@@ -97,7 +97,7 @@ def request_card(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def request_card_replacement_view(request):
     account_id = request.data.get('account_id')
     if not account_id:
@@ -119,7 +119,7 @@ def request_card_replacement_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def pay_card_fee(request, issuance_id):
     try:
         issuance = pay_card_issuance_fee(request.user, issuance_id)

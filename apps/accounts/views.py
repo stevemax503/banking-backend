@@ -1,7 +1,7 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
@@ -21,7 +21,7 @@ from apps.audit.customer_audit import mark_audit_handled
 
 
 class AccountListCreateView(AuditMixin, generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['account_type', 'status', 'currency']
     search_fields = ['account_number', 'nickname']
@@ -64,7 +64,7 @@ class AccountListCreateView(AuditMixin, generics.ListCreateAPIView):
 
 
 class AccountDetailView(AuditMixin, generics.RetrieveUpdateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return Account.objects.filter(owner=self.request.user, exclude_from_card_summary=False).select_related(
@@ -102,4 +102,4 @@ class AccountDetailView(AuditMixin, generics.RetrieveUpdateAPIView):
 class CurrencyListView(generics.ListAPIView):
     queryset = Currency.objects.filter(is_active=True)
     serializer_class = CurrencySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]

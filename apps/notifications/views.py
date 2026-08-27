@@ -1,6 +1,6 @@
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from .in_app import IN_APP_EVENT_TYPES
@@ -10,7 +10,7 @@ from .serializers import NotificationSerializer, NotificationPreferenceSerialize
 
 class NotificationListView(generics.ListAPIView):
     serializer_class = NotificationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return Notification.objects.filter(
@@ -20,7 +20,7 @@ class NotificationListView(generics.ListAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def mark_all_read(request):
     Notification.objects.filter(
         user=request.user,
@@ -31,7 +31,7 @@ def mark_all_read(request):
 
 
 @api_view(['PATCH'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def mark_read(request, pk):
     try:
         notif = Notification.objects.get(id=pk, user=request.user)
@@ -43,7 +43,7 @@ def mark_read(request, pk):
 
 
 class NotificationDestroyView(generics.DestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return Notification.objects.filter(
@@ -54,7 +54,7 @@ class NotificationDestroyView(generics.DestroyAPIView):
 
 class NotificationPreferenceView(generics.RetrieveUpdateAPIView):
     serializer_class = NotificationPreferenceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_object(self):
         pref, _ = NotificationPreference.objects.get_or_create(user=self.request.user)

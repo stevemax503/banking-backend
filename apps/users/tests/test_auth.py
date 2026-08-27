@@ -95,3 +95,44 @@ class TestLogin:
         url = reverse('auth-login')
         response = api_client.post(url, {'email': 'user@test.com', 'password': 'WrongPassword'})
         assert response.status_code == 401
+
+    def test_locked_user_can_login_and_read_profile(self, api_client, registered_user):
+        registered_user.is_locked = True
+        registered_user.is_active = True
+        registered_user.save(update_fields=['is_locked', 'is_active'])
+        login = api_client.post(reverse('auth-login'), {
+            'email': 'user@test.com',
+            'password': 'TestPass123!',
+        })
+        assert login.status_code == 200
+        api_client.credentials(HTTP_AUTHORIZATION=f'Bearer {login.data["access"]}')
+        profile = api_client.get(reverse('auth-profile'))
+        assert profile.status_code == 200
+        assert profile.data['is_locked'] is True
+
+    def test_locked_user_cannot_transfer(self, api_client, registered_user, db):
+        from decimal import Decimal
+        from apps.accounts.models import Account, Currency
+
+        registered_user.is_locked = True
+        registered_user.save(update_fields=['is_locked'])
+        currency = Currency.objects.create(code='USD', name='US Dollar', symbol='$')
+        Account.objects.create(
+            owner=registered_user,
+            currency=currency,
+            account_type=Account.AccountType.SAVINGS,
+            balance=Decimal('1000.00'),
+            available_balance=Decimal('1000.00'),
+            account_number='1111222233334444',
+        )
+        api_client.force_authenticate(registered_user)
+        list_res = api_client.get(reverse('transaction-list'))
+        assert list_res.status_code == 200
+        transfer_res = api_client.post(reverse('transaction-transfer'), {
+            'from_account_id': str(registered_user.accounts.first().id),
+            'to_account_id': '5555666677778888',
+            'amount': '10.00',
+            'transfer_type': 'TRANSFER_INTERNAL',
+        }, format='json')
+        assert transfer_res.status_code == 403
+        assert 'locked' in str(transfer_res.data).lower()

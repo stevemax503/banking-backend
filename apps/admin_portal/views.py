@@ -299,7 +299,9 @@ def toggle_user_lock(request, pk):
         return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
     user.is_locked = not user.is_locked
-    user.is_active = not user.is_locked
+    # Keep login enabled: JWT requires is_active. Lock only blocks money actions.
+    if user.is_locked and not user.is_active:
+        user.is_active = True
     user.save(update_fields=['is_locked', 'is_active'])
     action_text = 'locked' if user.is_locked else 'unlocked'
     log_action(
@@ -444,8 +446,8 @@ def admin_impersonate_customer(request, pk):
 
     assert_owner_in_scope(request.user, customer.id)
 
-    if customer.is_locked or not customer.is_active:
-        return Response({'detail': 'Customer account is locked or inactive.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not customer.is_active:
+        return Response({'detail': 'Customer account is inactive.'}, status=status.HTTP_400_BAD_REQUEST)
 
     refresh = RefreshToken.for_user(customer)
     log_action(

@@ -2,7 +2,7 @@ from django.db.models import Q
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from django_filters.rest_framework import DjangoFilterBackend
@@ -63,7 +63,7 @@ class TransactionFilter(django_filters.FilterSet):
 
 class TransactionListView(generics.ListAPIView):
     serializer_class = TransactionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
     pagination_class = TransactionListPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = TransactionFilter
@@ -81,7 +81,7 @@ class TransactionListView(generics.ListAPIView):
 
 class TransactionDetailView(generics.RetrieveAPIView):
     serializer_class = TransactionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         user = self.request.user
@@ -92,7 +92,7 @@ class TransactionDetailView(generics.RetrieveAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def deposit_view(request):
     serializer = DepositSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -118,7 +118,7 @@ def deposit_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def withdraw_view(request):
     serializer = WithdrawSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -146,7 +146,7 @@ def withdraw_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def transfer_view(request):
     serializer = TransferSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -274,7 +274,7 @@ def transfer_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def transfer_preview_view(request):
     serializer = TransferPreviewSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -306,7 +306,7 @@ def transfer_preview_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def transfer_send_otp_view(request):
     serializer = TransferSendOtpSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -359,10 +359,10 @@ def transfer_send_otp_view(request):
 class ExchangeRateListView(generics.ListAPIView):
     queryset = ExchangeRate.objects.all()
     serializer_class = ExchangeRateSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
 
 class TransactionFeeListView(generics.ListAPIView):
     queryset = TransactionFee.objects.filter(is_active=True)
     serializer_class = TransactionFeeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]

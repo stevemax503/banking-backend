@@ -41,12 +41,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'email', 'full_name', 'phone', 'role', 'kyc_status',
             'profile_picture', 'address', 'date_of_birth', 'nationality',
-            'is_mfa_enabled', 'date_joined', 'last_login',
+            'is_mfa_enabled', 'is_locked', 'date_joined', 'last_login',
             'profile_setup_completed', 'intended_account_type', 'id_document_type',
             'id_document_number', 'requires_profile_setup', 'admin_account_scope',
         ]
         read_only_fields = [
-            'id', 'email', 'role', 'kyc_status', 'date_joined', 'last_login',
+            'id', 'email', 'role', 'kyc_status', 'is_locked', 'date_joined', 'last_login',
             'profile_setup_completed', 'requires_profile_setup',
         ]
 

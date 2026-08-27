@@ -1,7 +1,7 @@
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from .models import SupportTicket, TicketMessage
@@ -9,7 +9,7 @@ from .serializers import SupportTicketSerializer, SupportTicketCreateSerializer,
 
 
 class TicketListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -28,14 +28,14 @@ class TicketListCreateView(generics.ListCreateAPIView):
 
 class TicketDetailView(generics.RetrieveAPIView):
     serializer_class = SupportTicketSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return SupportTicket.objects.filter(customer=self.request.user)
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def add_message(request, pk):
     try:
         ticket = SupportTicket.objects.get(id=pk, customer=request.user)
@@ -52,7 +52,7 @@ def add_message(request, pk):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def close_ticket(request, pk):
     try:
         ticket = SupportTicket.objects.get(id=pk, customer=request.user)

@@ -7,7 +7,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import status, generics
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import AllowAny
+from .permissions import CustomerAccessPermission
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -194,7 +195,7 @@ def mfa_verify(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def logout_view(request):
     try:
         refresh_token = request.data.get('refresh')
@@ -213,7 +214,7 @@ def logout_view(request):
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_serializer_class(self):
         if self.request.method in ['PUT', 'PATCH']:
@@ -247,7 +248,7 @@ class ProfileView(generics.RetrieveUpdateAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def profile_update_request_create(request):
     user = request.user
     if not user.is_customer:
@@ -274,7 +275,7 @@ def profile_update_request_create(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def change_password(request):
     serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
     serializer.is_valid(raise_exception=True)
@@ -327,7 +328,7 @@ def password_reset_confirm(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def kyc_upload(request):
     serializer = KYCUploadSerializer(instance=request.user, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
@@ -336,7 +337,7 @@ def kyc_upload(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def mfa_toggle(request):
     user = request.user
     user.is_mfa_enabled = not user.is_mfa_enabled

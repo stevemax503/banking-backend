@@ -1,7 +1,7 @@
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from apps.transactions.services import InsufficientFundsError
@@ -19,7 +19,7 @@ from .services import allocate_to_goal, cancel_savings_goal
 
 
 class SavingsGoalListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
     pagination_class = None
 
     def get_queryset(self):
@@ -38,7 +38,7 @@ class SavingsGoalListCreateView(generics.ListCreateAPIView):
 
 
 class SavingsGoalDetailView(generics.RetrieveUpdateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
     lookup_field = 'pk'
 
     def get_queryset(self):
@@ -56,7 +56,7 @@ class SavingsGoalDetailView(generics.RetrieveUpdateAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def savings_goal_cancel(request, pk):
     try:
         goal = cancel_savings_goal(pk, request.user)
@@ -68,7 +68,7 @@ def savings_goal_cancel(request, pk):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def savings_goal_allocate(request, pk):
     ser = SavingsGoalAllocateSerializer(data=request.data)
     ser.is_valid(raise_exception=True)

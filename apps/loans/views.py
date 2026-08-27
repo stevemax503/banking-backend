@@ -1,6 +1,6 @@
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from .models import LoanProduct, LoanApplication, LoanAccount
@@ -13,14 +13,14 @@ from .services import make_loan_payment
 
 class LoanProductListView(generics.ListAPIView):
     serializer_class = LoanProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return LoanProduct.objects.filter(is_active=True).order_by('loan_type', 'name')
 
 
 class LoanApplicationListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -36,7 +36,7 @@ class LoanApplicationListCreateView(generics.ListCreateAPIView):
 
 class LoanApplicationDetailView(generics.RetrieveAPIView):
     serializer_class = LoanApplicationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return LoanApplication.objects.filter(applicant=self.request.user).select_related('product')
@@ -53,7 +53,7 @@ class LoanApplicationDetailView(generics.RetrieveAPIView):
 
 class LoanAccountListView(generics.ListAPIView):
     serializer_class = LoanAccountSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return LoanAccount.objects.filter(
@@ -63,7 +63,7 @@ class LoanAccountListView(generics.ListAPIView):
 
 class LoanAccountDetailView(generics.RetrieveAPIView):
     serializer_class = LoanAccountSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CustomerAccessPermission]
 
     def get_queryset(self):
         return LoanAccount.objects.filter(
@@ -72,7 +72,7 @@ class LoanAccountDetailView(generics.RetrieveAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def loan_payment(request):
     serializer = LoanPaymentSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)

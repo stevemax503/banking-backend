@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from apps.users.permissions import CustomerAccessPermission
 from rest_framework.response import Response
 
 from apps.accounts.models import Account
@@ -41,7 +41,7 @@ from apps.notifications.services import send_transaction_notification
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def regulated_intl_session_start(request):
     ser = RegulatedIntlSessionStartSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
@@ -111,7 +111,7 @@ def regulated_intl_session_start(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def regulated_session_complete_transfer(request, session_id):
     """Mark a pending international transfer COMPLETED after all compliance lines are verified."""
     from .regulated_models import RegulatedTransferSession
@@ -155,7 +155,7 @@ def regulated_session_complete_transfer(request, session_id):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def regulated_session_detail(request, session_id):
     from .regulated_models import RegulatedTransferSession
 
@@ -181,7 +181,7 @@ def regulated_session_detail(request, session_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def regulated_line_submit_payment(request, session_id, line_id):
     from .regulated_models import RegulatedTransferSessionLine
     from .regulated_flow import RegulatedFlowError, session_serialized, submit_external_payment
@@ -212,7 +212,7 @@ def regulated_line_submit_payment(request, session_id, line_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def regulated_line_charge_send_otp(request, session_id, line_id):
     """Resend OTP when line is already CHARGED."""
     from .regulated_models import RegulatedTransferSessionLine
@@ -242,7 +242,7 @@ def regulated_line_charge_send_otp(request, session_id, line_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def regulated_line_verify_otp(request, session_id, line_id):
     ser = RegulatedLineOtpSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
@@ -271,7 +271,7 @@ def regulated_line_verify_otp(request, session_id, line_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def loan_regulated_payout_start(request, application_id):
     ser = LoanRegulatedPayoutStartSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
@@ -311,7 +311,7 @@ def loan_regulated_payout_start(request, application_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def loan_regulated_payout_complete(request, application_id):
     ser = LoanRegulatedPayoutCompleteSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
@@ -362,7 +362,7 @@ def loan_regulated_payout_complete(request, application_id):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CustomerAccessPermission])
 def loan_payout_context_view(request, application_id):
     try:
         app = LoanApplication.objects.select_related('product').get(
